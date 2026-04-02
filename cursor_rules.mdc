@@ -1,0 +1,100 @@
+# Casita Cursor Rules
+
+## Vision
+Casita is an owner-first rental operations app for LATAM.
+
+Its job is to help landlords manage:
+- monthly rent
+- expensas and utility bills
+- reminders
+- original bill files
+- proof of payment
+- tenant follow-up
+- multiple units cleanly
+
+## What Casita is not
+- not a full property management ERP
+- not accounting software
+- not an autopay utility processor
+- not a listing marketplace
+- not a legaltech contract platform
+
+## Core promise
+> Run multiple rentals without living in WhatsApp.
+
+## Product priorities
+Always optimize for:
+1. owner clarity
+2. low-friction tenant response
+3. original bill visibility
+4. reliable status tracking
+5. replaceable adapters
+
+## Scope discipline
+Prefer:
+- owner-first workflows
+- secure tenant links
+- property-centric organization
+- append-only activity history
+- adapter-based integrations
+- small, obvious steps
+
+Avoid:
+- broad role systems too early
+- over-automation of money movement
+- provider-specific UI coupling
+- scope expansion beyond the active task
+
+## Spec-driven development
+Always read:
+- spec.md
+- architecture.md
+- milestones.md
+- backlog.md
+- tasks/*.md
+
+Rules:
+- one task at a time
+- explain file changes before coding
+- do not silently add features
+- if something is out of MVP, put it in backlog unless explicitly requested
+- update docs when architecture changes
+
+## Code rules
+- TypeScript everywhere
+- clean, readable, reusable code
+- explicit validation
+- strong typing
+- small focused components
+- isolate business logic from adapters
+- keep app core as source of truth
+
+## n8n rules
+n8n may be used for:
+- reminder jobs
+- inbound email processing
+- outbound notifications
+- experiments
+
+n8n must not own:
+- the main data model
+- permissions
+- canonical statuses
+- long-term business rules
+
+## Vercel rules
+- design for Vercel preview and production
+- keep route handlers stateless
+- use external systems for durable state
+- document required env vars
+- keep webhook endpoints explicit and minimal
+
+## Decision filter
+Before adding a feature, ask:
+1. does it reduce owner follow-up?
+2. does it clarify payment status?
+3. does it preserve simplicity?
+4. does it fit the current milestone?
+5. does it keep Casita owner-first?
+
+If not clearly yes, do not add it yet.
