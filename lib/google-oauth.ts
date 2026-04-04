@@ -1,0 +1,139 @@
+import { encrypt, decrypt } from "@/lib/encrypt";
+
+const GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
+const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
+
+const SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"];
+
+function getCredentials() {
+  const clientId = process.env.GOOGLE_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+  if (!clientId || !clientSecret) {
+    throw new Error("GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are required");
+  }
+  return { clientId, clientSecret };
+}
+
+function getRedirectUri() {
+  const base = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+  return `${base}/api/auth/google-email/callback`;
+}
+
+/**
+ * Build the Google OAuth2 authorization URL.
+ * `state` encodes the workspaceId so we know which workspace to connect.
+ */
+export function buildGoogleAuthUrl(workspaceId: string): string {
+  const { clientId } = getCredentials();
+
+  const params = new URLSearchParams({
+    client_id: clientId,
+    redirect_uri: getRedirectUri(),
+    response_type: "code",
+    scope: SCOPES.join(" "),
+    access_type: "offline",
+    prompt: "consent",
+    state: workspaceId,
+  });
+
+  return `${GOOGLE_AUTH_URL}?${params.toString()}`;
+}
+
+type TokenResponse = {
+  access_token: string;
+  refresh_token?: string;
+  expires_in: number;
+  token_type: string;
+  scope: string;
+};
+
+/**
+ * Exchange an authorization code for tokens.
+ */
+export async function exchangeCodeForTokens(code: string): Promise<{
+  accessToken: string;
+  refreshToken: string;
+  email: string;
+}> {
+  const { clientId, clientSecret } = getCredentials();
+
+  const response = await fetch(GOOGLE_TOKEN_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      code,
+      client_id: clientId,
+      client_secret: clientSecret,
+      redirect_uri: getRedirectUri(),
+      grant_type: "authorization_code",
+    }),
+  });
+
+  if (!response.ok) {
+    const err = await response.text();
+    throw new Error(`Token exchange failed: ${err}`);
+  }
+
+  const data = (await response.json()) as TokenResponse;
+
+  if (!data.refresh_token) {
+    throw new Error("No refresh token returned. User may need to re-authorize.");
+  }
+
+  const email = await getEmailFromToken(data.access_token);
+
+  return {
+    accessToken: data.access_token,
+    refreshToken: data.refresh_token,
+    email,
+  };
+}
+
+/**
+ * Get a fresh access token from a stored (encrypted) refresh token.
+ */
+export async function refreshAccessToken(encryptedRefreshToken: string): Promise<string> {
+  const { clientId, clientSecret } = getCredentials();
+  const refreshToken = decrypt(encryptedRefreshToken);
+
+  const response = await fetch(GOOGLE_TOKEN_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      refresh_token: refreshToken,
+      client_id: clientId,
+      client_secret: clientSecret,
+      grant_type: "refresh_token",
+    }),
+  });
+
+  if (!response.ok) {
+    const err = await response.text();
+    throw new Error(`Token refresh failed: ${err}`);
+  }
+
+  const data = (await response.json()) as TokenResponse;
+  return data.access_token;
+}
+
+/**
+ * Encrypt a refresh token for storage.
+ */
+export function encryptRefreshToken(token: string): string {
+  return encrypt(token);
+}
+
+async function getEmailFromToken(accessToken: string): Promise<string> {
+  const res = await fetch("https://www.googleapis.com/gmail/v1/users/me/profile", {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+
+  if (!res.ok) throw new Error("Could not fetch Gmail profile");
+
+  const profile = (await res.json()) as { emailAddress: string };
+  return profile.emailAddress;
+}
+
+export function isGoogleOAuthConfigured(): boolean {
+  return Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
+}

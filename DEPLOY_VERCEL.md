@@ -78,9 +78,10 @@ EMAIL_FROM=
 
 ### Mercado Pago
 ```env
-MERCADOPAGO_ACCESS_TOKEN=
-MERCADOPAGO_WEBHOOK_SECRET=
+MP_WEBHOOK_URL=
 ```
+
+Note: access tokens are stored per workspace from the app settings (not as a global env var).
 
 ### WhatsApp (Twilio example)
 ```env
@@ -93,7 +94,9 @@ TWILIO_WHATSAPP_FROM=
 ```env
 NEXT_PUBLIC_APP_URL=
 CRON_SECRET=
-TENANT_LINK_SECRET=
+WEBHOOK_SECRET=
+ENCRYPTION_SECRET=
+GEMINI_API_KEY=
 ```
 
 ## 7. Local environment sync
@@ -108,7 +111,7 @@ vercel env pull .env.local
 
 ## 9. Webhooks
 ### Mercado Pago webhook endpoint
-Create route:
+Configured route:
 `/api/webhooks/mercadopago`
 
 This route should:
@@ -121,7 +124,7 @@ This route should:
 ## 10. Email ingestion
 Recommended V1:
 - create forwarding inbox provider / inbound email webhook
-- point inbound events to `/api/inbound/email`
+- point inbound events to `/api/webhooks/n8n-bill`
 - store attachments
 - create IncomingBillReview row
 

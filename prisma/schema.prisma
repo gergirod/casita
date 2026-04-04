@@ -1,0 +1,313 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model Workspace {
+  id               String            @id @default(cuid())
+  ownerId          String
+  name             String
+  locale           String            @default("es-AR")
+  currency         String            @default("ARS")
+  timezone         String            @default("America/Argentina/Buenos_Aires")
+  defaultTone      String            @default("friendly")
+  n8nWebhookUrl String?    /* n8n outbound: nuestra app POST acá para enviar mensajes */
+  n8nSecret     String?    /* secret que valida que somos nosotros */
+
+  /* Conexión de email para ingesta automática de facturas */
+  emailProvider          String?   /* "gmail" | "gmail-oauth" | "outlook" | "yahoo" | "imap" */
+  emailAddress           String?
+  emailEncryptedPassword String?   /* AES-256 cifrado — IMAP app password */
+  emailRefreshToken      String?   /* AES-256 cifrado — OAuth2 refresh token */
+  imapHost               String?   /* custom IMAP host */
+  imapPort               Int?      /* default 993 */
+  emailConnectedAt       DateTime?
+  /* Mercado Pago connection */
+  mpEnabled              Boolean   @default(false)
+  mpAccessTokenEncrypted String?
+  mpPublicKey            String?
+  mpUserId               String?
+  mpPaymentLink          String?
+  whatsappEnabled        Boolean   @default(true)
+  ownerPhone             String?
+  properties       Property[]
+  messageTemplates MessageTemplate[]
+  messageDeliveryLogs MessageDeliveryLog[]
+  scheduledReminders ScheduledReminder[]
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  @@index([ownerId])
+}
+
+model MessageTemplate {
+  id          String    @id @default(cuid())
+  workspaceId String
+  event       String    /* due_soon | due_today | overdue */
+  tone        String    /* friendly | firm | urgent */
+  channel     String    /* email | whatsapp */
+  subject     String?   /* email subject line */
+  body        String    /* supports {{nombre}} {{monto}} {{vencimiento}} {{propiedad}} {{unidad}} {{link}} */
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([workspaceId, event, tone, channel])
+  @@index([workspaceId])
+}
+
+model Property {
+  id          String    @id @default(cuid())
+  workspaceId String
+  name        String
+  address     String?
+  notes       String?
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  units       Unit[]
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([workspaceId])
+}
+
+model Unit {
+  id                  String               @id @default(cuid())
+  propertyId          String
+  identifier          String
+  isActive            Boolean              @default(true)
+  tenantToken         String               @unique @default(dbgenerated("gen_random_uuid()"))
+  contractUrl         String?
+  contractText        String?
+  leaseEndDate        DateTime?
+  property            Property             @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  tenantContact       TenantContact?
+  obligationTemplates ObligationTemplate[]
+  obligations         Obligation[]
+  contractHistory     ContractHistory[]
+  claims              Claim[]
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+
+  @@index([propertyId])
+}
+
+model ContractHistory {
+  id         String   @id @default(cuid())
+  unitId     String
+  url        String
+  uploadedAt DateTime @default(now())
+  unit       Unit     @relation(fields: [unitId], references: [id], onDelete: Cascade)
+
+  @@index([unitId])
+}
+
+model TenantContact {
+  id        String   @id @default(cuid())
+  unitId    String   @unique
+  fullName  String
+  email           String?
+  whatsapp        String?
+  welcomeSentAt   DateTime?
+  unit      Unit     @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model ObligationTemplate {
+  id          String         @id @default(cuid())
+  unitId      String
+  type        ObligationType
+  title       String
+  amount      Decimal        @db.Decimal(12, 2)
+  currency        String         @default("ARS")
+  dueDay          Int
+  providerSlug    String?
+  /* manual | auto_email */
+  ingestionMode   String         @default("manual")
+  /* monthly | bimonthly | quarterly — cuándo buscar en el email */
+  billingPeriod   String         @default("monthly")
+  reminderDays    Int            @default(3)
+  reminderChannel String         @default("email")
+  remindBefore    Boolean        @default(true)
+  remindOnDue     Boolean        @default(true)
+  remindOverdue   Boolean        @default(true)
+  /* Payment info — only used for rent templates */
+  paymentMethod   String?        /* "cbu" | "mp_link" */
+  paymentCbu      String?        /* CBU or alias */
+  paymentName     String?        /* owner full name for transfer */
+  paymentMpLink   String?        /* Mercado Pago payment link */
+  isActive        Boolean        @default(true)
+  unit        Unit           @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  obligations Obligation[]
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  @@index([unitId])
+  @@unique([unitId, type])
+}
+
+model Obligation {
+  id               String               @id @default(cuid())
+  unitId           String
+  templateId       String?
+  type             ObligationType
+  sourceType       ObligationSourceType
+  title            String
+  amount           Decimal              @db.Decimal(12, 2)
+  dueDate          DateTime
+  dueMonth         DateTime?
+  currency         String               @default("ARS")
+  status           ObligationStatus
+  notes            String?
+  originalBillUrl  String?
+  proofUrl         String?
+  proofUploadedAt  DateTime?
+  extractionSource String?              /* "gemini" | "n8n" | null (manual) */
+  extractedAmount  Decimal?             @db.Decimal(12, 2)
+  extractedDueDate DateTime?
+  extractedPeriod  String?
+  paymentProvider  String?
+  paymentLinkUrl   String?
+  paymentExternalRef String?
+  paymentId        String?
+  paidAt           DateTime?
+  unit             Unit                 @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  template         ObligationTemplate?  @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+
+  @@index([unitId, dueDate])
+  @@index([status, dueDate])
+  @@unique([templateId, dueMonth])
+}
+
+enum ObligationType {
+  rent
+  expensas
+  electricity
+  gas
+  water
+  internet
+  custom
+}
+
+enum ObligationSourceType {
+  recurring_rent
+  manual
+  n8n
+}
+
+enum ObligationStatus {
+  upcoming
+  pending
+  reminded
+  proof_uploaded
+  verified
+  overdue
+  cancelled
+}
+
+model NotificationLog {
+  id           String           @id @default(cuid())
+  obligationId String
+  type         NotificationType
+  sentTo       String
+  sentAt       DateTime         @default(now())
+
+  @@unique([obligationId, type])
+  @@index([obligationId])
+}
+
+model MessageDeliveryLog {
+  id           String    @id @default(cuid())
+  workspaceId  String
+  obligationId String?
+  channel      String    /* email | whatsapp */
+  event        String    /* due_soon | due_today | overdue | bill_uploaded */
+  to           String
+  status       String    /* sent | skipped | failed */
+  provider     String?   /* twilio | resend | n8n */
+  error        String?
+  createdAt    DateTime  @default(now())
+  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, createdAt])
+  @@index([obligationId, createdAt])
+}
+
+enum NotificationType {
+  due_soon
+  due_today
+  overdue
+  proof_uploaded_owner
+  payment_confirmed
+}
+
+model ChatMessage {
+  id        String   @id @default(cuid())
+  phone     String
+  role      String   /* "user" | "assistant" */
+  content   String
+  createdAt DateTime @default(now())
+
+  @@index([phone, createdAt])
+}
+
+model Claim {
+  id          String      @id @default(cuid())
+  unitId      String
+  description String
+  status      ClaimStatus @default(open)
+  source      String      @default("whatsapp")
+  createdAt   DateTime    @default(now())
+  resolvedAt  DateTime?
+  unit        Unit        @relation(fields: [unitId], references: [id], onDelete: Cascade)
+
+  @@index([unitId, status])
+  @@index([status, createdAt])
+}
+
+enum ClaimStatus {
+  open
+  in_progress
+  resolved
+}
+
+model ActivityLog {
+  id          String   @id @default(cuid())
+  workspaceId String
+  unitId      String?
+  actorType   String   // "owner" | "tenant" | "system" | "cron"
+  actorId     String?  // phone, ownerId, null para sistema/cron
+  action      String   // obligation.created | reminder.sent | proof.uploaded | payment.verified | claim.created | claim.updated
+  entityType  String?  // "obligation" | "claim" | "reminder"
+  entityId    String?  // id de la entidad afectada
+  metadata    Json?    // datos extra serializados (amount, status, title, etc.)
+  channel     String?  // "whatsapp" | "dashboard" | "cron" | "api" | "webhook"
+  createdAt   DateTime @default(now())
+
+  @@index([workspaceId, createdAt])
+  @@index([unitId, createdAt])
+  @@index([entityId])
+}
+
+model ScheduledReminder {
+  id           String   @id @default(cuid())
+  workspaceId  String
+  obligationId String?
+  sendAt       DateTime
+  channel      String   @default("both") /* email | whatsapp | both */
+  message      String?
+  status       String   @default("pending") /* pending | sent | cancelled */
+  createdAt    DateTime @default(now())
+  sentAt       DateTime?
+  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([status, sendAt])
+  @@index([workspaceId])
+}

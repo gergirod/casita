@@ -1,0 +1,294 @@
+{
+  "name": "Casita WhatsApp Bot MVP",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "casita-whatsapp-inbound",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "WebhookInbound",
+      "name": "Webhook Inbound",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 220]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "duplicateItem": false,
+        "fields": {
+          "values": [
+            {
+              "name": "from",
+              "type": "string",
+              "value": "={{$json.from || ($json.body && $json.body.from) || \"\"}}"
+            },
+            {
+              "name": "text",
+              "type": "string",
+              "value": "={{$json.body || ($json.body && $json.body.body) || \"\"}}"
+            },
+            {
+              "name": "mediaUrl",
+              "type": "string",
+              "value": "={{$json.mediaUrl || ($json.body && $json.body.mediaUrl) || \"\"}}"
+            },
+            {
+              "name": "mediaType",
+              "type": "string",
+              "value": "={{$json.mediaType || ($json.body && $json.body.mediaType) || \"\"}}"
+            }
+          ]
+        }
+      },
+      "id": "SetNormalize",
+      "name": "Set Normalize",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [480, 220]
+    },
+    {
+      "parameters": {
+        "url": "={{$env.CASITA_APP_URL}}/api/tenant-by-phone?number={{$json.from}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-casita-secret",
+              "value": "={{$env.CASITA_SECRET}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "TenantLookup",
+      "name": "Tenant Lookup",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [720, 220]
+    },
+    {
+      "parameters": {
+        "resource": "chat",
+        "operation": "create",
+        "model": "gpt-4o-mini",
+        "messages": {
+          "messageValues": [
+            {
+              "role": "system",
+              "content": "Sos el bot de Casita. Clasificá intención de mensaje de inquilino. Devolvé JSON estricto con: intent (proof_payment|bill_upload|note|unknown), obligationId (string|null), category (reclamo|consulta|otro), reply (string breve en español rioplatense)."
+            },
+            {
+              "role": "user",
+              "content": "Tenant: {{$node[\"Tenant Lookup\"].json[\"tenant\"][\"name\"]}}. Unit: {{$node[\"Tenant Lookup\"].json[\"unit\"][\"property\"]}}. Obligations: {{$jsonString($node[\"Tenant Lookup\"].json[\"obligations\"])}}. Message text: {{$node[\"Set Normalize\"].json[\"text\"]}}. Media URL: {{$node[\"Set Normalize\"].json[\"mediaUrl\"]}}"
+            }
+          ]
+        },
+        "simplifyOutput": true,
+        "jsonOutput": true
+      },
+      "id": "OpenAIClassify",
+      "name": "OpenAI Classify Intent",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [980, 220],
+      "credentials": {
+        "openAiApi": {
+          "id": "OPENAI_CREDENTIAL_ID",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 2
+          },
+          "combinator": "or",
+          "conditions": [
+            {
+              "leftValue": "={{$json.intent}}",
+              "rightValue": "proof_payment",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "leftValue": "={{$json.intent}}",
+              "rightValue": "bill_upload",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "IfProof",
+      "name": "IF Proof/Bill",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1220, 220]
+    },
+    {
+      "parameters": {
+        "url": "={{$env.CASITA_APP_URL}}/api/tenant/{{$node[\"Tenant Lookup\"].json[\"unit\"][\"token\"]}}/proof-url",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={\"obligationId\":\"{{$json.obligationId || $node[\"Tenant Lookup\"].json[\"obligations\"][0][\"id\"]}}\",\"mediaUrl\":\"{{$node[\"Set Normalize\"].json[\"mediaUrl\"]}}\",\"contentType\":\"{{$node[\"Set Normalize\"].json[\"mediaType\"] || \"image/jpeg\"}}\"}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-casita-secret",
+              "value": "={{$env.CASITA_SECRET}}"
+            }
+          ]
+        }
+      },
+      "id": "SaveProof",
+      "name": "Save Proof URL",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1460, 140]
+    },
+    {
+      "parameters": {
+        "url": "={{$env.CASITA_APP_URL}}/api/tenant/{{$node[\"Tenant Lookup\"].json[\"unit\"][\"token\"]}}/note",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={\"text\":\"{{$node[\"Set Normalize\"].json[\"text\"]}}\",\"category\":\"{{$json.category || \"otro\"}}\"}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-casita-secret",
+              "value": "={{$env.CASITA_SECRET}}"
+            }
+          ]
+        }
+      },
+      "id": "SaveNote",
+      "name": "Save Note",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1460, 300]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "to": "={{$node[\"Set Normalize\"].json[\"from\"]}}",
+        "message": "={{$json.reply || \"Recibimos tu mensaje. Ya lo estamos procesando.\"}}"
+      },
+      "id": "TwilioReply",
+      "name": "Twilio Reply",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [1700, 220],
+      "credentials": {
+        "twilioApi": {
+          "id": "TWILIO_CREDENTIAL_ID",
+          "name": "Twilio API"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook Inbound": {
+      "main": [
+        [
+          {
+            "node": "Set Normalize",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Normalize": {
+      "main": [
+        [
+          {
+            "node": "Tenant Lookup",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tenant Lookup": {
+      "main": [
+        [
+          {
+            "node": "OpenAI Classify Intent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Classify Intent": {
+      "main": [
+        [
+          {
+            "node": "IF Proof/Bill",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Proof/Bill": {
+      "main": [
+        [
+          {
+            "node": "Save Proof URL",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Save Note",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Proof URL": {
+      "main": [
+        [
+          {
+            "node": "Twilio Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Note": {
+      "main": [
+        [
+          {
+            "node": "Twilio Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "templateNotice": "Replace credential IDs and env vars before activation."
+  }
+}

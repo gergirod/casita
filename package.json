@@ -1,0 +1,50 @@
+{
+  "name": "casita",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Casita foundations app shell",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint .",
+    "prisma:generate": "prisma generate",
+    "test": "npx tsx lib/services/__tests__/obligation-state-machine.test.ts && npx tsx lib/services/__tests__/claims.test.ts && npx tsx lib/services/__tests__/bills.test.ts && npx tsx lib/services/__tests__/reminders.test.ts"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gergirod/casita.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/gergirod/casita/issues"
+  },
+  "homepage": "https://github.com/gergirod/casita#readme",
+  "dependencies": {
+    "@prisma/client": "^6.19.3",
+    "@supabase/ssr": "^0.10.0",
+    "@supabase/supabase-js": "^2.101.1",
+    "imapflow": "^1.2.18",
+    "mailparser": "^3.9.6",
+    "next": "^16.2.2",
+    "openai": "^6.33.0",
+    "prisma": "^6.19.3",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "resend": "^6.10.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.2.2",
+    "@types/mailparser": "^3.4.6",
+    "@types/node": "^25.5.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "eslint": "^9.39.4",
+    "eslint-config-next": "^16.2.2",
+    "tailwindcss": "^4.2.2",
+    "typescript": "^6.0.2"
+  }
+}
