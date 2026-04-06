@@ -11,22 +11,25 @@ export async function routeByPhone(rawPhone: string): Promise<PhoneRoute> {
   const digits = norm(rawPhone);
   const last10 = digits.slice(-10);
 
-  const ownerWs = await prisma.workspace.findFirst({
+  // Owner lookup is now account-level via OwnerProfile — one phone per owner,
+  // independent of how many workspaces they have.
+  const ownerProfile = await prisma.ownerProfile.findFirst({
     where: {
-      ownerPhone: { not: null },
+      phone: { not: null },
+      whatsappEnabled: true,
       OR: [
-        { ownerPhone: { contains: digits } },
-        { ownerPhone: { contains: `+${digits}` } },
-        ...(last10 ? [{ ownerPhone: { contains: last10 } }] : []),
+        { phone: { contains: digits } },
+        { phone: { contains: `+${digits}` } },
+        ...(last10 ? [{ phone: { contains: last10 } }] : []),
       ],
     },
-    select: { ownerId: true, ownerPhone: true },
+    select: { ownerId: true, phone: true },
   });
 
-  if (ownerWs) {
-    const wsDigits = norm(ownerWs.ownerPhone ?? "");
-    if (wsDigits === digits || wsDigits.endsWith(last10)) {
-      return { type: "owner", ownerId: ownerWs.ownerId, phone: digits };
+  if (ownerProfile) {
+    const profileDigits = norm(ownerProfile.phone ?? "");
+    if (profileDigits === digits || profileDigits.endsWith(last10)) {
+      return { type: "owner", ownerId: ownerProfile.ownerId, phone: digits };
     }
   }
 

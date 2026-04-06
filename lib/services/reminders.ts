@@ -52,7 +52,7 @@ export async function sendReminderToTenant(
           property: {
             select: {
               name: true,
-              workspace: { select: { id: true, whatsappEnabled: true } },
+              workspace: { select: { id: true, ownerId: true } },
             },
           },
         },
@@ -64,6 +64,13 @@ export async function sendReminderToTenant(
 
   const contact = ob.unit.tenantContact;
   if (!contact) return { ok: false, error: "No hay inquilino registrado.", code: "not_found" };
+
+  // whatsappEnabled lives on OwnerProfile (account-level), not per workspace.
+  const ownerProfile = await prisma.ownerProfile.findUnique({
+    where: { ownerId: ob.unit.property.workspace.ownerId },
+    select: { whatsappEnabled: true },
+  });
+  const whatsappEnabled = ownerProfile?.whatsappEnabled ?? false;
 
   const channels: string[] = [];
   const daysUntilDue = Math.round((ob.dueDate.getTime() - Date.now()) / 864e5);
@@ -88,7 +95,7 @@ export async function sendReminderToTenant(
     } catch { /* non-blocking — channel failure never aborts the send */ }
   }
 
-  if (contact.whatsapp && ob.unit.property.workspace.whatsappEnabled) {
+  if (contact.whatsapp && whatsappEnabled) {
     try {
       const body = buildReminderMessage({
         tenantName: contact.fullName,

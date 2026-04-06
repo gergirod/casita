@@ -648,7 +648,7 @@ export async function handleWhatsAppMessage(input: {
     }
 
     const reply =
-      choice.message.content ?? "No pude procesar tu mensaje. Intentá de nuevo.";
+      choice.message.content || "No pude procesar tu mensaje. Intentá de nuevo.";
 
     await saveChatMessage(phone, "assistant", reply);
 

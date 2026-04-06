@@ -3,6 +3,11 @@ import { SignOutButton } from "@/components/sign-out-button";
 import { requireOwner } from "@/lib/auth";
 import { getOwnerDashboardOverview } from "@/lib/dashboard-data";
 import { CasitaLogo, CasitaLockup } from "@/components/casita-logo";
+import { WhatsAppConnectBanner } from "@/components/whatsapp-connect-banner";
+import { prisma } from "@/lib/prisma";
+
+const CASITA_WA_NUMBER = process.env.TWILIO_WHATSAPP_FROM ?? "+14155238886";
+const SANDBOX_JOIN_CODE = process.env.TWILIO_SANDBOX_JOIN_CODE ?? undefined;
 
 export default async function DashboardPage() {
   const owner = await requireOwner();
@@ -14,6 +19,12 @@ export default async function DashboardPage() {
     if (!isDatabaseConnectivityError(error)) throw error;
     return <DatabaseErrorState />;
   }
+
+  const ownerProfile = await prisma.ownerProfile.findUnique({
+    where: { ownerId: owner.id },
+    select: { phone: true },
+  });
+  const hasWhatsApp = !!ownerProfile?.phone;
 
   const summary = workspaces.reduce(
     (acc, ws) => {
@@ -67,6 +78,14 @@ export default async function DashboardPage() {
       </header>
 
       <div style={{ maxWidth: "640px", margin: "0 auto", padding: "2rem 1.25rem" }}>
+        {/* WhatsApp onboarding banner — shown until the owner connects their phone */}
+        {!hasWhatsApp && (
+          <WhatsAppConnectBanner
+            casitaWhatsAppNumber={CASITA_WA_NUMBER}
+            sandboxJoinCode={SANDBOX_JOIN_CODE}
+          />
+        )}
+
         {/* Title + summary */}
         <div style={{ marginBottom: "1.75rem" }}>
           <h1 style={{

@@ -27,7 +27,7 @@ export async function GET(req: NextRequest) {
       workspace: {
         select: {
           name: true,
-          whatsappEnabled: true,
+          ownerId: true,
           properties: {
             select: {
               name: true,
@@ -91,7 +91,13 @@ export async function GET(req: NextRequest) {
       } catch { /* non-blocking */ }
     }
 
-    if (wantsWa && contact.whatsapp && reminder.workspace.whatsappEnabled) {
+    const ownerProfile = await prisma.ownerProfile.findUnique({
+      where: { ownerId: reminder.workspace.ownerId },
+      select: { whatsappEnabled: true },
+    });
+    const whatsappEnabled = ownerProfile?.whatsappEnabled ?? false;
+
+    if (wantsWa && contact.whatsapp && whatsappEnabled) {
       try {
         const body = reminder.message ?? buildReminderMessage({
           tenantName: contact.fullName, title: obligation.title, amount: obligation.amount.toString(),

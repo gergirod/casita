@@ -27,7 +27,8 @@ import {
   listPendingReminders,
 } from "@/lib/services/owner-queries";
 import { ingestBill } from "@/lib/services/bills";
-import { getContractText, askContractDirect } from "@/lib/contract-reader";
+import { getContractText, askContractDirect, invalidateContractCache } from "@/lib/contract-reader";
+import { uploadFileToBucket, getPublicUrl, STORAGE_BUCKETS } from "@/lib/storage";
 import { buildGoogleAuthUrl, isGoogleOAuthConfigured } from "@/lib/google-oauth";
 import { buildMicrosoftAuthUrl, isMicrosoftOAuthConfigured } from "@/lib/microsoft-oauth";
 import { searchOutlookByProvider, searchOutlookByCustomSender } from "@/lib/outlook-api";
@@ -163,12 +164,34 @@ const tools: OpenAI.ChatCompletionTool[] = [
   {
     type: "function",
     function: {
+      name: "get_field_requirements",
+      description: "Retorna los campos requeridos y opcionales para una acción antes de ejecutarla. Usá esto al inicio de cualquier wizard para saber exactamente qué datos pedirle al owner.",
+      parameters: {
+        type: OBJ,
+        properties: {
+          action: {
+            type: "string",
+            enum: ["create_casita", "create_recurring_charge", "create_manual_charge", "create_new_rental"],
+            description: "La acción para la cual quieres ver los campos requeridos",
+          },
+        },
+        required: ["action"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "create_casita",
-      description: "Crea una casita nueva completa (workspace + propiedad + unidad). Opcionalmente con inquilino y alquiler.",
+      description: "Crea una casita nueva completa (workspace + propiedad + unidad). Opcionalmente con método de pago, inquilino y alquiler.",
       parameters: {
         type: OBJ,
         properties: {
           name: { type: "string", description: "Nombre de la casita" },
+          payment_method: { type: "string", enum: ["cbu", "mp_link"], description: "Método de cobro: 'cbu' para transferencia, 'mp_link' para Mercado Pago" },
+          payment_cbu: { type: "string", description: "CBU, alias bancario, o alias de Mercado Pago" },
+          payment_holder_name: { type: "string", description: "Nombre del titular de la cuenta" },
+          payment_mp_link: { type: "string", description: "Link de pago de Mercado Pago (si aplica)" },
           tenant_name: { type: "string", description: "Nombre del inquilino (opcional)" },
           tenant_email: { type: "string" },
           tenant_whatsapp: { type: "string" },
@@ -329,6 +352,21 @@ const tools: OpenAI.ChatCompletionTool[] = [
   {
     type: "function",
     function: {
+      name: "upload_contract",
+      description: "Sube un contrato de alquiler que el owner envió por WhatsApp (PDF). Guarda el archivo y lo asocia a la casita. Usá esta tool cuando el owner manda un PDF con la palabra 'contrato'.",
+      parameters: {
+        type: OBJ,
+        properties: {
+          workspace_id: { type: "string", description: "ID de la casita" },
+          media_url: { type: "string", description: "URL del PDF enviado por Twilio (búscala en el historial si el owner la mandó antes)" },
+        },
+        required: ["workspace_id", "media_url"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "fetch_bills_from_email",
       description:
         "Busca facturas en el email conectado del owner. " +
@@ -459,59 +497,25 @@ Tu trabajo es ayudar al propietario a gestionar sus alquileres:
 - Consultar el contrato de alquiler (cláusulas, condiciones, plazos)
 
 MENÚ DE ACCIONES:
-Cuando el owner diga "hola", "menu", "ayuda", "qué podés hacer" o cualquier saludo/pregunta general, respondé con este menú:
+Cuando el owner diga "hola", "menu", "ayuda" o cualquier saludo general, respondé con este menú (no lo alargues, no agregues explicaciones):
 
-🏠 *¡Hola! Soy Casita, tu asistente de alquileres.*
-Esto es todo lo que puedo hacer por vos:
+🏠 *Casita* — tu asistente de alquileres
 
-📋 *Consultar*
-• "¿Cómo están mis casitas?" — resumen general
-• "¿Qué pagos tiene pendientes [casita]?" — ver obligaciones
-• "¿Quién es el inquilino de [casita]?" — datos del inquilino
+*Qué podés pedirme:*
+• "resumen" — ver estado de tus casitas y pagos
+• "crear casita" — dar de alta una propiedad nueva
+• "nuevo inquilino" — registrar un inquilino en una casita
+• "cobro mensual" — crear expensas, luz, gas u otro recurrente
+• "cobro puntual" — un cargo de una sola vez
+• "recordatorio" — mandarle aviso de pago al inquilino
+• "reclamos" — ver o gestionar reclamos abiertos
+• "contrato" — consultar cláusulas del contrato
+• "factura" — subir una factura (mandá el PDF/foto)
+• "buscar facturas" — buscar en tu email conectado
 
-💰 *Pagos y cobros*
-• "Creá un cobro mensual de expensas de $80.000 el día 10" — recurrente
-• "Creá un cobro puntual de gas de $30.000 que vence el 15" — una sola vez
-• "Verificá el último comprobante" — revisar proof de pago
-• "Cambiar estado de [obligación] a pagado" — actualizar estado
+O escribime directamente qué necesitás 👋
 
-🏗️ *Gestionar casitas*
-• "Creá una nueva casita" — wizard paso a paso
-• "Actualizá el alquiler de [casita] a $400.000"
-• "Terminá el alquiler de [casita]"
-• "Borrá [casita]" — requiere confirmación
-
-📄 *Facturas*
-• "Subí esta factura a [casita]" — con imagen adjunta
-• "Buscame la factura de Edenor en mi email"
-• "Buscame las expensas de [administración]"
-
-📧 *Email*
-• "Conectá mi email" — Gmail o Outlook, un click y listo
-• "¿Está conectado mi email?" — verificar estado
-
-🔧 *Reclamos*
-• "¿Hay reclamos abiertos?" — ver todos los pendientes
-• "Marcá el reclamo como resuelto" — cerrar un reclamo
-• "¿Qué reclamos tiene [casita]?" — filtrar por casita
-
-📜 *Contrato*
-• "¿Cuántas cláusulas tiene el contrato?" — consulta sobre el contrato
-• "¿Cuándo vence el contrato?" — fechas del contrato
-• "¿Qué dice sobre el depósito?" — condiciones
-
-📬 *Recordatorios*
-• "Mandale un recordatorio al inquilino de [casita]"
-• "Programá un recordatorio para el viernes a las 9"
-• "¿Qué recordatorios tengo programados?"
-
-🆕 *Altas*
-• "Creá un alquiler nuevo en [casita]" — con inquilino
-• "Mandá bienvenida al inquilino de [casita]"
-
-Podés escribir tu pedido en lenguaje natural, no hace falta copiar estos ejemplos exactos 😊
-
-NO muestres este menú completo si el owner hace una pregunta específica — solo cuando saluda o pide ayuda.
+NO muestres este menú si el owner hace una pregunta específica — solo cuando saluda o pide "menu" / "ayuda".
 
 REGLAS:
 - Solo respondés sobre temas de gestión de alquileres.
@@ -522,22 +526,32 @@ REGLAS:
 - Para borrar casita, el owner debe decir "SI BORRAR".
 - Si el owner tiene UNA sola casita, no le preguntes cuál — usá esa.
 - Si tiene VARIAS, preguntale a cuál se refiere y listá las opciones.
-- Cuando el owner mande una imagen o PDF, preguntale si es una factura y de qué servicio.
+- Cuando el owner mande una imagen o PDF, identificá si es factura o contrato según el mensaje que acompaña el archivo. Si dice "contrato" → procesalo como contrato. Si dice "factura", "luz", "gas", "expensas" → procesalo como factura (upload_bill).
+- Si el owner manda un PDF/imagen y tiene UNA sola casita, procesalo directamente sin preguntar de cuál. Si tiene varias, preguntá de cuál es y usá la URL del archivo del mensaje anterior (búscala en el historial).
+- MEMORIA DE ARCHIVOS: Si en un mensaje anterior hay un archivo adjunto (con media_url: URL en el historial), y el owner en el mensaje actual aclara de qué casita o servicio es, rescatá esa URL del historial y llamá a la tool correspondiente. NO digas que no hay archivo — el archivo ya fue enviado antes.
 - Respondé en máximo 2-3 oraciones cortas salvo que necesites listar datos.
 - Usá emojis con moderación (🏠📋💰✅⚠️🔴📅).
-- Cada mensaje es independiente. No repitas acciones de mensajes anteriores.
+- Cada mensaje es independiente SALVO cuando hay un archivo pendiente de procesar del turno anterior.
+- Si algo falla o no podés completar una acción, decile al owner que lo puede hacer desde el dashboard.
+- Cuando creás una casita o registrás un inquilino y la respuesta incluye hasWhatsapp: true, SIEMPRE preguntá: "¿Le mando el mensaje de bienvenida por WhatsApp ahora?" — no lo mandés sin confirmación.
 
 CONVERSACIÓN PASO A PASO (MUY IMPORTANTE):
-Para acciones que necesitan varios datos (crear casita, crear cobro, dar de alta inquilino, etc.), NUNCA pidas todos los campos de una. Guiá al owner paso a paso preguntando DE A UNO:
+Para acciones que necesitan varios datos (crear casita, crear cobro, dar de alta inquilino, etc.), NUNCA pidas todos los campos de una. Guiá al owner paso a paso preguntando DE A UNO.
+
+ANTES de arrancar cualquier wizard, podés llamar get_field_requirements con el nombre de la acción para obtener exactamente qué campos son obligatorios y opcionales. Úsalo si no estás seguro de qué pedir.
+
+Si una acción retorna ok: false con campo missing, significa que faltan campos obligatorios. Pediselos al owner de a uno antes de reintentar.
 
 Ejemplo crear casita:
 1. "🏠 ¡Dale! ¿Cómo se llama la casita?" → esperar respuesta
-2. "¿Tiene inquilino? Decime el nombre o 'no' si todavía no." → esperar
-3. Si tiene inquilino: "¿Email del inquilino?" → esperar
-4. "¿WhatsApp del inquilino?" → esperar
-5. "¿Cuánto es el alquiler mensual? (o 'no' si todavía no definiste)" → esperar
-6. Si hay alquiler: "¿Qué día del mes vence? (1-31)" → esperar
-7. Confirmar todo: "Te resumo: *Casita Belgrano*, inquilino *Juan Perez*, alquiler *$350.000* vence el *10*. ¿Creo?"
+2. "¿Cómo cobrás el alquiler? Transferencia bancaria (CBU/alias) o Mercado Pago." → esperar
+3. Si transferencia: "¿Cuál es el CBU o alias?" → esperar, luego "¿A nombre de quién?" → esperar
+4. Si Mercado Pago: "¿Cuál es el alias de MP?" → esperar
+5. "¿Ya tiene inquilino? Decime el nombre o 'no'." → esperar
+6. Si tiene inquilino: "¿WhatsApp del inquilino?" → esperar
+7. "¿Cuánto es el alquiler? (o 'no' si todavía no está definido)" → esperar
+8. Si hay alquiler: "¿Qué día del mes vence? (1-31)" → esperar
+9. Confirmar todo: "Te resumo: *Casita Belgrano*, cobro por CBU alias *mi.alias*, inquilino *Juan Perez*, alquiler *$350.000* el día *10*. ¿Creo?"
 
 COBROS — PUNTUAL vs RECURRENTE (MUY IMPORTANTE):
 Cuando el owner quiera crear un cobro, SIEMPRE preguntá primero: "¿Es un cobro mensual recurrente o un cobro puntual de una sola vez?"
@@ -618,6 +632,10 @@ async function handleToolCall(
   const a = args as Record<string, string | number | undefined>;
 
   switch (name) {
+    case "get_field_requirements": {
+      const { getFieldRequirements } = await import("@/lib/onboarding-specs");
+      return getFieldRequirements(a.action as string);
+    }
     case "get_overview": return getOverview(owner.ownerId);
     case "get_obligations": return getObligations(owner.ownerId, a.workspace_id as string | undefined, a.filter as string | undefined);
     case "get_tenant_info": return getTenantInfo(owner.ownerId, a.workspace_id as string | undefined);
@@ -637,6 +655,7 @@ async function handleToolCall(
     case "cancel_reminder": return cancelReminderTool(owner.ownerId, a.reminder_id as string);
     case "send_welcome": return sendWelcomeTool(owner.ownerId, a.workspace_id as string);
     case "upload_bill": return uploadBill(owner.ownerId, args);
+    case "upload_contract": return uploadContract(owner.ownerId, args);
     case "fetch_bills_from_email": return fetchBillsEmail(owner.ownerId, a.workspace_id as string | undefined, a.search_terms as string | undefined, a.custom_sender as string | undefined);
     case "get_claims": return getClaimsTool(owner.ownerId, a.workspace_id as string, a.unit_id as string | undefined, a.status as string | undefined);
     case "update_claim": return updateClaimTool(owner.ownerId, a.claim_id as string, a.status as string);
@@ -782,14 +801,25 @@ async function createRecurringCharge(ownerId: string, args: Record<string, unkno
 }
 
 async function createCasita(ownerId: string, args: Record<string, unknown>): Promise<string> {
-  const { name, tenant_name, tenant_email, tenant_whatsapp, rent_amount, rent_currency, due_day } = args as {
+  const {
+    name, tenant_name, tenant_email, tenant_whatsapp, rent_amount, rent_currency, due_day,
+    payment_method, payment_cbu, payment_holder_name, payment_mp_link,
+  } = args as {
     name: string; tenant_name?: string; tenant_email?: string; tenant_whatsapp?: string;
     rent_amount?: number; rent_currency?: string; due_day?: number;
+    payment_method?: "cbu" | "mp_link"; payment_cbu?: string;
+    payment_holder_name?: string; payment_mp_link?: string;
   };
 
   const result = await createWorkspace({
     ownerId,
     name,
+    payment: payment_method ? {
+      method: payment_method,
+      cbu: payment_cbu,
+      holderName: payment_holder_name,
+      mpLink: payment_mp_link,
+    } : undefined,
     tenant: tenant_name ? { fullName: tenant_name, email: tenant_email, whatsapp: tenant_whatsapp } : undefined,
     rent: (rent_amount && due_day) ? { amount: rent_amount, currency: rent_currency, dueDay: due_day } : undefined,
   });
@@ -797,10 +827,12 @@ async function createCasita(ownerId: string, args: Record<string, unknown>): Pro
   if (!result.ok) return JSON.stringify({ error: result.error });
 
   let msg = `Casita "${name}" creada.`;
+  if (payment_cbu) msg += ` Método de pago: ${payment_method === "mp_link" ? "Mercado Pago" : "transferencia"} (${payment_cbu}).`;
   if (tenant_name) msg += ` Inquilino: ${tenant_name}.`;
   if (rent_amount) msg += ` Alquiler: ${rent_currency ?? "ARS"} ${rent_amount} el día ${due_day}.`;
+  const hasWhatsapp = !!tenant_whatsapp;
 
-  return JSON.stringify({ ok: true, ...result.data, message: msg });
+  return JSON.stringify({ ok: true, ...result.data, hasWhatsapp, message: msg });
 }
 
 async function createNewRental(ownerId: string, args: Record<string, unknown>): Promise<string> {
@@ -818,7 +850,14 @@ async function createNewRental(ownerId: string, args: Record<string, unknown>): 
   });
 
   if (!result.ok) return JSON.stringify({ error: result.error });
-  return JSON.stringify({ ok: true, unitId: result.data.unitId, message: `Inquilino "${tenant_name}" dado de alta.` });
+
+  return JSON.stringify({
+    ok: true,
+    unitId: result.data.unitId,
+    workspaceId: workspace_id,
+    hasWhatsapp: !!tenant_whatsapp,
+    message: `Inquilino "${tenant_name}" dado de alta.`,
+  });
 }
 
 async function endRental(ownerId: string, wsId: string): Promise<string> {
@@ -954,11 +993,180 @@ async function uploadBill(ownerId: string, args: Record<string, unknown>): Promi
 
   if (!result.ok) return JSON.stringify({ error: result.error });
 
+  const billWarnings: string[] = [];
+
+  // Warn if the bill period looks like a past month
+  if (result.data.extractedPeriod) {
+    const period = result.data.extractedPeriod.toLowerCase();
+    const now = new Date();
+    const currentMonthNames = [
+      "enero","febrero","marzo","abril","mayo","junio",
+      "julio","agosto","septiembre","octubre","noviembre","diciembre",
+    ];
+    const prevMonth = currentMonthNames[(now.getMonth() - 1 + 12) % 12];
+    const prev2Month = currentMonthNames[(now.getMonth() - 2 + 12) % 12];
+    if (period.includes(prev2Month) || (period.includes(prevMonth) && !period.includes(currentMonthNames[now.getMonth()]))) {
+      billWarnings.push(`parece ser de ${result.data.extractedPeriod}, no del mes actual — ¿es la factura correcta?`);
+    }
+  }
+
   const msg = result.data.extractedAmount != null
-    ? `Factura "${result.data.title}" subida. Monto detectado: ARS ${result.data.extractedAmount}${result.data.extractedPeriod ? ` (${result.data.extractedPeriod})` : ""}.`
+    ? `Factura "${result.data.title}" subida. Monto: ARS ${result.data.extractedAmount}${result.data.extractedPeriod ? ` (${result.data.extractedPeriod})` : ""}.`
     : `Factura "${result.data.title}" subida. No pude detectar el monto — revisala desde el dashboard.`;
 
-  return JSON.stringify({ ok: true, id: result.data.obligationId, billUrl: result.data.billUrl, message: msg });
+  const billWarningText = billWarnings.length > 0 ? ` ⚠️ ${billWarnings.join("; ")}.` : "";
+
+  return JSON.stringify({ ok: true, id: result.data.obligationId, billUrl: result.data.billUrl, message: msg + billWarningText, warnings: billWarnings });
+}
+
+async function extractContractMetadata(fileBuffer: Buffer, mimeType: string): Promise<{
+  tenantName?: string;
+  landlordName?: string;
+  startDate?: string;
+  endDate?: string;
+} | null> {
+  try {
+    const base64 = fileBuffer.toString("base64");
+    const isImage = mimeType.startsWith("image/");
+    const prompt = "Extraé del contrato: nombre del inquilino (locatario), nombre del propietario (locador), fecha de inicio y fecha de fin. Respondé SOLO con JSON válido: {\"tenantName\": \"...\", \"landlordName\": \"...\", \"startDate\": \"YYYY-MM-DD\", \"endDate\": \"YYYY-MM-DD\"}. Si no encontrás un campo ponelo null.";
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const userContent: any[] = isImage
+      ? [
+          { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64}`, detail: "high" } },
+          { type: "text", text: prompt },
+        ]
+      : [
+          { type: "text", text: prompt },
+          { type: "file", file: { filename: "contrato.pdf", file_data: `data:${mimeType};base64,${base64}` } },
+        ];
+
+    const resp = await openai.chat.completions.create({
+      model: "gpt-5.4-mini",
+      temperature: 0,
+      max_completion_tokens: 400,
+      messages: [{ role: "user", content: userContent }],
+    });
+
+    const text = resp.choices[0]?.message?.content ?? "";
+    const jsonMatch = text.match(/\{[\s\S]*?\}/);
+    if (!jsonMatch) return null;
+    return JSON.parse(jsonMatch[0]);
+  } catch (err) {
+    console.error("[contract-meta] extraction error:", err);
+    return null;
+  }
+}
+
+async function uploadContract(ownerId: string, args: Record<string, unknown>): Promise<string> {
+  const { workspace_id, media_url } = args as { workspace_id: string; media_url: string };
+
+  const wId = await resolveWorkspaceId(ownerId, workspace_id);
+  if (!wId) return JSON.stringify({ error: "Necesito workspace_id." });
+
+  // Load unit + tenant to cross-check contract
+  const unitData = await prisma.unit.findFirst({
+    where: { property: { workspaceId: wId } },
+    select: {
+      id: true,
+      leaseEndDate: true,
+      tenantContact: { select: { fullName: true } },
+    },
+    orderBy: { createdAt: "desc" },
+  });
+  if (!unitData) return JSON.stringify({ error: "No hay unidad activa en esta casita." });
+
+  if (!process.env.TWILIO_ACCOUNT_SID || !process.env.TWILIO_AUTH_TOKEN) {
+    return JSON.stringify({ error: "Twilio no configurado." });
+  }
+
+  const twilioAuth = Buffer.from(
+    `${process.env.TWILIO_ACCOUNT_SID}:${process.env.TWILIO_AUTH_TOKEN}`
+  ).toString("base64");
+
+  const mediaRes = await fetch(media_url, { headers: { Authorization: `Basic ${twilioAuth}` } });
+  if (!mediaRes.ok) return JSON.stringify({ error: "No pude descargar el PDF." });
+
+  const mimeType = mediaRes.headers.get("content-type") ?? "application/pdf";
+  const fileBuffer = Buffer.from(await mediaRes.arrayBuffer());
+  const ext = mimeType.includes("pdf") ? "pdf" : "jpg";
+  const path = `${unitData.id}/contrato-${Date.now()}.${ext}`;
+
+  await uploadFileToBucket({
+    bucket: STORAGE_BUCKETS.contracts,
+    path,
+    file: fileBuffer,
+    contentType: mimeType,
+  });
+
+  const contractUrl = getPublicUrl(STORAGE_BUCKETS.contracts, path);
+
+  await prisma.$transaction([
+    prisma.unit.update({
+      where: { id: unitData.id },
+      data: { contractUrl, contractText: null },
+    }),
+    prisma.contractHistory.create({
+      data: { unitId: unitData.id, url: contractUrl },
+    }),
+  ]);
+
+  await invalidateContractCache(unitData.id);
+
+  // ── Smart validation ──────────────────────────────────────────
+  const meta = await extractContractMetadata(fileBuffer, mimeType);
+  const warnings: string[] = [];
+  const today = new Date();
+
+  if (meta) {
+    // Cross-check tenant name
+    const storedTenant = unitData.tenantContact?.fullName ?? null;
+    if (storedTenant && meta.tenantName) {
+      const normalize = (s: string) => s.toLowerCase().replace(/\s+/g, " ").trim();
+      if (!normalize(meta.tenantName).includes(normalize(storedTenant).split(" ")[0].toLowerCase())) {
+        warnings.push(`el inquilino en el contrato parece ser "${meta.tenantName}" pero en el sistema está registrado "${storedTenant}"`);
+      }
+    }
+
+    // Check if contract is expired
+    if (meta.endDate) {
+      const end = new Date(meta.endDate);
+      if (end < today) {
+        const diffMonths = Math.round((today.getTime() - end.getTime()) / (1000 * 60 * 60 * 24 * 30));
+        warnings.push(`el contrato venció hace ~${diffMonths} mes${diffMonths === 1 ? "" : "es"} (${meta.endDate})`);
+      }
+    }
+
+    // Check if start date is in the future (weird)
+    if (meta.startDate) {
+      const start = new Date(meta.startDate);
+      if (start > today) {
+        warnings.push(`la fecha de inicio del contrato es futura (${meta.startDate})`);
+      }
+    }
+  }
+
+  const contractInfo = meta
+    ? [
+        meta.tenantName ? `Inquilino: ${meta.tenantName}` : null,
+        meta.startDate && meta.endDate ? `Vigencia: ${meta.startDate} → ${meta.endDate}` : null,
+      ].filter(Boolean).join(" | ")
+    : null;
+
+  const base = contractInfo
+    ? `Contrato subido ✅ ${contractInfo}.`
+    : "Contrato subido ✅.";
+
+  const warningText = warnings.length > 0
+    ? ` ⚠️ Ojo: ${warnings.join("; ")}.`
+    : "";
+
+  return JSON.stringify({
+    ok: true,
+    meta,
+    warnings,
+    message: base + warningText + " Ya podés preguntarme sobre las cláusulas.",
+  });
 }
 
 async function fetchBillsEmail(ownerId: string, wsId?: string, searchTerms?: string, customSender?: string): Promise<string> {
@@ -1201,7 +1409,7 @@ export async function handleOwnerMessage(input: {
   mediaUrl?: string | null;
   mediaType?: string | null;
 }): Promise<string> {
-  const FALLBACK = "Ups, tuve un problema técnico. Intentá de nuevo en unos minutos 🙏";
+  const FALLBACK = "Ups, tuve un problema técnico 🙏 Si necesitás, podés hacerlo desde el dashboard.";
 
   try {
     const { ownerId, phone, body, mediaUrl, mediaType } = input;
@@ -1244,7 +1452,7 @@ export async function handleOwnerMessage(input: {
     ];
 
     let response = await openai.chat.completions.create({
-      model: "gpt-5.4-mini", messages, tools, temperature: 0.3, max_completion_tokens: 500,
+      model: "gpt-5.4-mini", messages, tools, temperature: 0.3, max_completion_tokens: 2000,
     });
     let choice = response.choices[0];
     let currentMessages = [...messages];
@@ -1259,11 +1467,12 @@ export async function handleOwnerMessage(input: {
         currentMessages.push({ role: "tool", tool_call_id: tc.id, content: result });
       }
       response = await openai.chat.completions.create({
-        model: "gpt-5.4-mini", messages: currentMessages, tools, temperature: 0.3, max_completion_tokens: 500,
+        model: "gpt-5.4-mini", messages: currentMessages, tools, temperature: 0.3, max_completion_tokens: 2000,
       });
       choice = response.choices[0];
     }
 
+    // Handle final tool_calls round if content is still empty
     if (!choice.message.content && choice.finish_reason === "tool_calls") {
       if (choice.message.tool_calls) {
         currentMessages.push(choice.message);
@@ -1275,12 +1484,26 @@ export async function handleOwnerMessage(input: {
         }
       }
       response = await openai.chat.completions.create({
-        model: "gpt-5.4-mini", messages: currentMessages, temperature: 0.3, max_completion_tokens: 500,
+        model: "gpt-5.4-mini", messages: currentMessages, temperature: 0.3, max_completion_tokens: 2000,
       });
       choice = response.choices[0];
     }
 
-    const reply = choice.message.content ?? "No pude procesar tu mensaje. Intentá de nuevo.";
+    // Last resort: if still no text content after all rounds, force a plain text response
+    if (!choice.message.content) {
+      response = await openai.chat.completions.create({
+        model: "gpt-5.4-mini",
+        messages: [
+          ...currentMessages,
+          { role: "user", content: "[Sistema: Respondé al último mensaje del propietario en texto plano, sin llamar tools.]" },
+        ],
+        temperature: 0.3,
+        max_completion_tokens: 2000,
+      });
+      choice = response.choices[0];
+    }
+
+    const reply = choice.message.content || "No pude procesar tu mensaje. Intentá de nuevo.";
     await saveChatMessage(phone, "assistant", reply);
     return reply;
   } catch (err) {

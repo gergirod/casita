@@ -93,7 +93,7 @@ export async function DELETE(
     where: { id: workspaceId },
     data: {
       emailProvider: null, emailAddress: null,
-      emailEncryptedPassword: null,
+      emailEncryptedPassword: null, emailRefreshToken: null,
       imapHost: null, imapPort: null, emailConnectedAt: null,
     },
   });

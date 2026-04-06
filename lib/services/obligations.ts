@@ -24,7 +24,7 @@ import {
 
 export type ServiceResult<T> =
   | { ok: true; data: T }
-  | { ok: false; error: string; code: "not_found" | "forbidden" | "invalid_input" | "conflict" };
+  | { ok: false; error: string; code: "not_found" | "forbidden" | "invalid_input" | "conflict" | "missing_field" };
 
 // ─── verifyPayment ──────────────────────────────────────────────
 //
@@ -544,8 +544,10 @@ export async function createRecurringObligation(
       ? input.frequency
       : "monthly";
 
-  const template = await prisma.obligationTemplate.create({
-    data: {
+  // upsert: if a template of the same type already exists for this unit, update it
+  const template = await prisma.obligationTemplate.upsert({
+    where: { unitId_type: { unitId: input.unitId, type: input.type } },
+    create: {
       unitId: input.unitId,
       type: input.type,
       title: input.title,
@@ -554,6 +556,14 @@ export async function createRecurringObligation(
       dueDay: input.dueDay,
       ingestionMode: "manual",
       billingPeriod,
+    },
+    update: {
+      title: input.title,
+      amount: toPrismaDecimal(input.amount),
+      currency: input.currency ?? "ARS",
+      dueDay: input.dueDay,
+      billingPeriod,
+      isActive: true,
     },
   });
 

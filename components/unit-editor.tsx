@@ -42,6 +42,8 @@ type Props = {
   unitId: string;
   workspaceId: string;
   emailConnected: boolean;
+  googleOAuthEnabled: boolean;
+  microsoftOAuthEnabled: boolean;
   templates: Template[];
   obligations?: MonthlyObligation[];
   leaseEndDate?: string | null;
@@ -58,7 +60,7 @@ function addMonths(d: Date, n: number): Date {
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + n, 1));
 }
 
-export function UnitEditor({ unitId, workspaceId, emailConnected, templates, obligations = [], leaseEndDate, unitCreatedAt, tenantName }: Props) {
+export function UnitEditor({ unitId, workspaceId, emailConnected, googleOAuthEnabled, microsoftOAuthEnabled, templates, obligations = [], leaseEndDate, unitCreatedAt, tenantName }: Props) {
   const router = useRouter();
   const [, startTransition] = useTransition();
 
@@ -782,6 +784,8 @@ export function UnitEditor({ unitId, workspaceId, emailConnected, templates, obl
                       workspaceId={workspaceId}
                       connectedEmail={null}
                       connectedAt={null}
+                      googleOAuthEnabled={googleOAuthEnabled}
+                      microsoftOAuthEnabled={microsoftOAuthEnabled}
                       onConnected={refresh}
                       onDisconnected={refresh}
                     />
@@ -998,7 +1002,15 @@ export function UnitEditor({ unitId, workspaceId, emailConnected, templates, obl
                 <IngestionModePicker value={editIngestionMode} onChange={setEditIngestionMode} />
 
                 {editIngestionMode === "auto_email" && !emailConnected && (
-                  <EmailConnect workspaceId={workspaceId} connectedEmail={null} connectedAt={null} onConnected={refresh} onDisconnected={refresh} />
+                  <EmailConnect
+                    workspaceId={workspaceId}
+                    connectedEmail={null}
+                    connectedAt={null}
+                    googleOAuthEnabled={googleOAuthEnabled}
+                    microsoftOAuthEnabled={microsoftOAuthEnabled}
+                    onConnected={refresh}
+                    onDisconnected={refresh}
+                  />
                 )}
 
                 {t.type !== "rent" && (

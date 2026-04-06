@@ -22,89 +22,96 @@ export async function GET(req: NextRequest) {
   const today = new Date();
   today.setUTCHours(0, 0, 0, 0);
 
-  const workspaces = await prisma.workspace.findMany({
-    where: { ownerPhone: { not: null }, whatsappEnabled: true },
-    select: {
-      id: true,
-      name: true,
-      ownerPhone: true,
-      properties: {
-        select: {
-          units: {
-            where: { isActive: true },
-            select: {
-              tenantContact: { select: { fullName: true } },
-              obligations: {
-                where: {
-                  status: { in: ["pending", "upcoming", "reminded"] },
-                },
-                select: {
-                  id: true,
-                  title: true,
-                  amount: true,
-                  currency: true,
-                  dueDate: true,
-                  status: true,
-                  proofUrl: true,
+  // Phone is account-level: query OwnerProfile directly.
+  const profiles = await prisma.ownerProfile.findMany({
+    where: { phone: { not: null }, whatsappEnabled: true },
+    select: { ownerId: true, phone: true },
+  });
+
+  let sent = 0;
+  const errors: string[] = [];
+
+  for (const profile of profiles) {
+    if (!profile.phone) continue;
+
+    const workspaces = await prisma.workspace.findMany({
+      where: { ownerId: profile.ownerId },
+      select: {
+        id: true,
+        name: true,
+        properties: {
+          select: {
+            units: {
+              where: { isActive: true },
+              select: {
+                tenantContact: { select: { fullName: true } },
+                obligations: {
+                  where: {
+                    status: { in: ["pending", "upcoming", "reminded"] },
+                  },
+                  select: {
+                    id: true,
+                    title: true,
+                    amount: true,
+                    currency: true,
+                    dueDate: true,
+                    status: true,
+                    proofUrl: true,
+                  },
                 },
               },
             },
           },
         },
       },
-    },
-  });
+    });
 
-  let sent = 0;
-  const errors: string[] = [];
+    for (const ws of workspaces) {
+      const unit = ws.properties[0]?.units[0];
+      if (!unit) continue;
 
-  for (const ws of workspaces) {
-    if (!ws.ownerPhone) continue;
+      const tenant = unit.tenantContact?.fullName ?? "el inquilino";
+      const alerts: string[] = [];
 
-    const unit = ws.properties[0]?.units[0];
-    if (!unit) continue;
+      for (const ob of unit.obligations) {
+        const dueDate = new Date(ob.dueDate);
+        dueDate.setUTCHours(0, 0, 0, 0);
+        const diffDays = Math.round((dueDate.getTime() - today.getTime()) / 864e5);
+        const amountStr = `${ob.currency} ${ob.amount}`;
+        const hasProof = !!ob.proofUrl;
 
-    const tenant = unit.tenantContact?.fullName ?? "el inquilino";
-    const alerts: string[] = [];
-
-    for (const ob of unit.obligations) {
-      const dueDate = new Date(ob.dueDate);
-      dueDate.setUTCHours(0, 0, 0, 0);
-      const diffDays = Math.round((dueDate.getTime() - today.getTime()) / 864e5);
-      const amountStr = `${ob.currency} ${ob.amount}`;
-      const hasProof = !!ob.proofUrl;
-
-      if (diffDays === 3) {
-        alerts.push(
-          `📋 *${ob.title}* (${amountStr}) vence en 3 días (${fmtDate(dueDate)}).` +
-          `\n¿Querés que le mande un recordatorio a ${tenant}?`
-        );
-      } else if (diffDays === 0 && !hasProof) {
-        alerts.push(
-          `⚠️ *${ob.title}* (${amountStr}) vence *hoy* y ${tenant} todavía no envió comprobante.` +
-          `\n¿Le mando un recordatorio?`
-        );
-      } else if (diffDays === -2 && !hasProof) {
-        alerts.push(
-          `🔴 *${ob.title}* (${amountStr}) venció hace 2 días y no recibimos comprobante de ${tenant}.` +
-          `\n¿Qué hacemos? Puedo mandarle un recordatorio o cancelar la obligación.`
-        );
+        if (diffDays === 3) {
+          alerts.push(
+            `📋 *${ob.title}* (${amountStr}) vence en 3 días (${fmtDate(dueDate)}).` +
+            `\n¿Querés que le mande un recordatorio a ${tenant}?`
+          );
+        } else if (diffDays === 0 && !hasProof) {
+          alerts.push(
+            `⚠️ *${ob.title}* (${amountStr}) vence *hoy* y ${tenant} todavía no envió comprobante.` +
+            `\n¿Le mando un recordatorio?`
+          );
+        } else if (diffDays === -2 && !hasProof) {
+          alerts.push(
+            `🔴 *${ob.title}* (${amountStr}) venció hace 2 días y no recibimos comprobante de ${tenant}.` +
+            `\n¿Qué hacemos? Puedo mandarle un recordatorio o cancelar la obligación.`
+          );
+        }
       }
-    }
 
-    if (alerts.length === 0) continue;
+      if (alerts.length === 0) continue;
 
-    const header = alerts.length === 1
-      ? `Hola, tengo una novedad de *${ws.name}*:\n\n`
-      : `Hola, tengo ${alerts.length} novedades de *${ws.name}*:\n\n`;
+      const header = alerts.length === 1
+        ? `Hola, tengo una novedad de *${ws.name}*:\n\n`
+        : `Hola, tengo ${alerts.length} novedades de *${ws.name}*:\n\n`;
 
-    const body = header + alerts.join("\n\n");
+      const body = header + alerts.join("\n\n");
 
-    try {
-      await sendWhatsApp({ to: ws.ownerPhone, body });
-      sent++;
-    } catch (err) {
-      errors.push(`${ws.name}: ${err instanceof Error ? err.message : "error"}`);
+      try {
+        await sendWhatsApp({ to: profile.phone, body });
+        sent++;
+      } catch (err) {
+        errors.push(`${ws.name}: ${err instanceof Error ? err.message : "error"}`);
+      }
     }
   }
 

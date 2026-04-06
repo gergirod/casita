@@ -8,6 +8,8 @@
 
 ## Mediano plazo
 
+- **Usuario que es owner e inquilino con el mismo teléfono**: hoy el router prioriza siempre owner. Si un owner también es inquilino en otra casita, ese número nunca puede hablar como inquilino. Decisión de MVP: aceptable (caso muy raro). Posibles soluciones futuras: keyword "modo inquilino" para cambiar contexto, o permitir un segundo número por rol.
+
 - Mercado Pago payment link en la obligación de alquiler
 - Webhook MP para verificación automática
 - WhatsApp reminders (Twilio o Meta Cloud API)

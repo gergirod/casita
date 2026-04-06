@@ -10,6 +10,7 @@ const updateWorkspaceSchema = z.object({
   timezone:      z.string().optional(),
   n8nWebhookUrl: z.string().url().nullable().optional(),
   n8nSecret:     z.string().nullable().optional(),
+  // ownerPhone is account-level — stored in OwnerProfile, not per workspace.
   ownerPhone:    z.string().nullable().optional(),
 });
 
@@ -37,9 +38,28 @@ export async function PATCH(
     return NextResponse.json({ error: "Espacio de trabajo no encontrado" }, { status: 404 });
   }
 
+  // Handle ownerPhone separately — it lives on OwnerProfile (account-level).
+  const { ownerPhone, ...workspaceFields } = parsed.data;
+
+  if (ownerPhone !== undefined) {
+    await prisma.ownerProfile.upsert({
+      where: { ownerId: auth.user.id },
+      create: {
+        ownerId: auth.user.id,
+        phone: ownerPhone,
+        whatsappEnabled: ownerPhone !== null,
+      },
+      update: {
+        phone: ownerPhone,
+        // If clearing the phone, disable WhatsApp automatically.
+        ...(ownerPhone === null ? { whatsappEnabled: false } : {}),
+      },
+    });
+  }
+
   const workspace = await prisma.workspace.update({
     where: { id: workspaceId },
-    data: parsed.data
+    data: workspaceFields
   });
 
   return NextResponse.json({ workspace });

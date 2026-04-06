@@ -33,8 +33,6 @@ model Workspace {
   mpPublicKey            String?
   mpUserId               String?
   mpPaymentLink          String?
-  whatsappEnabled        Boolean   @default(true)
-  ownerPhone             String?
   properties       Property[]
   messageTemplates MessageTemplate[]
   messageDeliveryLogs MessageDeliveryLog[]
@@ -43,6 +41,20 @@ model Workspace {
   updatedAt        DateTime          @updatedAt
 
   @@index([ownerId])
+}
+
+// One profile per owner account — stores WhatsApp phone and global settings.
+// Intentionally decoupled from Workspace so the phone is registered once,
+// not repeated on every property the owner creates.
+model OwnerProfile {
+  id              String   @id @default(cuid())
+  ownerId         String   @unique
+  phone           String?
+  whatsappEnabled Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([phone])
 }
 
 model MessageTemplate {

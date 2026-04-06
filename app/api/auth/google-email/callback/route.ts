@@ -28,7 +28,7 @@ export async function GET(req: NextRequest) {
 
   const ws = await prisma.workspace.findUnique({
     where: { id: workspaceId },
-    select: { id: true, ownerPhone: true, name: true },
+    select: { id: true, name: true, ownerId: true },
   });
 
   if (!ws) {
@@ -53,11 +53,16 @@ export async function GET(req: NextRequest) {
       },
     });
 
-    if (ws.ownerPhone) {
+    const ownerProfile = await prisma.ownerProfile.findUnique({
+      where: { ownerId: ws.ownerId },
+      select: { phone: true },
+    });
+    const ownerPhone = ownerProfile?.phone ?? null;
+    if (ownerPhone) {
       try {
         await sendWhatsApp({
-          to: ws.ownerPhone,
-          body: `✅ *Gmail conectado*\n\nTu email *${email}* quedó vinculado a *${ws.name}*. Ahora puedo buscar facturas en tu correo.\n\nProbá: "Buscame la factura de Edenor"`,
+          to: ownerPhone,
+          body: `✅ *Gmail conectado*\n\nTu email *${email}* quedó vinculado a *${ws.name}*. Ahora puedo buscar facturas en tu correo.\n\nProbá: "Buscame la última factura de Edenor"`,
         });
       } catch {
         // WhatsApp notification is best-effort

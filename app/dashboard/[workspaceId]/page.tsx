@@ -9,6 +9,8 @@ import { UnitEditor } from "@/components/unit-editor";
 import { WorkspaceSettings } from "@/components/workspace-settings";
 import { ClaimsPanel } from "@/components/claims-panel";
 import { ActivityFeed } from "@/components/activity-feed";
+import { isGoogleOAuthConfigured } from "@/lib/google-oauth";
+import { isMicrosoftOAuthConfigured } from "@/lib/microsoft-oauth";
 export default async function WorkspacePage({
   params,
 }: {
@@ -241,6 +243,8 @@ export default async function WorkspacePage({
               unitId={unit.id}
               workspaceId={workspace.id}
               emailConnected={Boolean(workspace.emailAddress)}
+              googleOAuthEnabled={isGoogleOAuthConfigured()}
+              microsoftOAuthEnabled={isMicrosoftOAuthConfigured()}
               templates={unit.obligationTemplates}
               obligations={unitObligations}
               leaseEndDate={unit.leaseEndDate ?? null}

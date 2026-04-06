@@ -2,6 +2,15 @@ import { randomUUID } from "crypto";
 import { prisma } from "@/lib/prisma";
 import { toPrismaDecimal } from "@/lib/obligations";
 import type { ServiceResult } from "@/lib/services/obligations";
+import { validateRequiredFields } from "@/lib/onboarding-specs";
+
+/** Normalize a WhatsApp phone to digits-only with leading + (E.164-ish). */
+function normalizeWhatsApp(phone: string | undefined | null): string | null {
+  if (!phone) return null;
+  const digits = phone.replace(/\D/g, "");
+  if (!digits) return null;
+  return `+${digits}`;
+}
 
 // ─── createWorkspace ─────────────────────────────────────────────
 //
@@ -13,6 +22,12 @@ import type { ServiceResult } from "@/lib/services/obligations";
 export interface CreateWorkspaceInput {
   ownerId: string;
   name: string;
+  payment?: {
+    method: "cbu" | "mp_link";   // "cbu" = bank transfer, "mp_link" = Mercado Pago
+    cbu?: string;                 // CBU, alias, or MP alias
+    holderName?: string;          // Account holder name shown to tenant
+    mpLink?: string;              // Full MP payment link if method=mp_link
+  };
   tenant?: {
     fullName: string;
     email?: string;
@@ -28,6 +43,16 @@ export interface CreateWorkspaceInput {
 export async function createWorkspace(
   input: CreateWorkspaceInput
 ): Promise<ServiceResult<{ workspaceId: string; unitId: string }>> {
+  // Validate required fields before touching the DB
+  const validation = validateRequiredFields("create_casita", {
+    name: input.name,
+    payment_method: input.payment?.method,
+    payment_cbu: input.payment?.cbu,
+  });
+  if (!validation.ok) {
+    return { ok: false, error: validation.message, code: "missing_field" };
+  }
+
   const result = await prisma.$transaction(async (tx) => {
     const ws = await tx.workspace.create({ data: { ownerId: input.ownerId, name: input.name } });
     const prop = await tx.property.create({ data: { workspaceId: ws.id, name: input.name } });
@@ -41,20 +66,27 @@ export async function createWorkspace(
           unitId: unit.id,
           fullName: input.tenant.fullName,
           email: input.tenant.email ?? null,
-          whatsapp: input.tenant.whatsapp ?? null,
+          whatsapp: normalizeWhatsApp(input.tenant.whatsapp),
         },
       });
     }
 
-    if (input.rent) {
+    // Create rent template if rent info OR payment info is provided.
+    // Payment info lives on the rent template so the welcome message can include it.
+    if (input.rent || input.payment) {
       await tx.obligationTemplate.create({
         data: {
           unitId: unit.id,
           type: "rent",
           title: `Alquiler ${input.name}`,
-          amount: toPrismaDecimal(input.rent.amount),
-          currency: input.rent.currency ?? "ARS",
-          dueDay: input.rent.dueDay,
+          amount: toPrismaDecimal(input.rent?.amount ?? 0),
+          currency: input.rent?.currency ?? "ARS",
+          dueDay: input.rent?.dueDay ?? 1,
+          ...(input.payment ? {
+            paymentMethod: input.payment.method,
+            paymentCbu: input.payment.cbu ?? null,
+            paymentName: input.payment.holderName ?? null,
+          } : {}),
         },
       });
     }
@@ -107,7 +139,7 @@ export async function registerTenant(
         create: {
           fullName: input.tenantName,
           email: input.tenantEmail ?? null,
-          whatsapp: input.tenantWhatsapp ?? null,
+          whatsapp: normalizeWhatsApp(input.tenantWhatsapp),
         },
       },
     },

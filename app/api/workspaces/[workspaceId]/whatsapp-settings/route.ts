@@ -25,9 +25,11 @@ export async function POST(
   const parsed = schema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
 
-  await prisma.workspace.update({
-    where: { id: workspaceId },
-    data: { whatsappEnabled: parsed.data.enabled },
+  // whatsappEnabled is account-level — stored in OwnerProfile, not per workspace.
+  await prisma.ownerProfile.upsert({
+    where: { ownerId: auth.user.id },
+    create: { ownerId: auth.user.id, whatsappEnabled: parsed.data.enabled },
+    update: { whatsappEnabled: parsed.data.enabled },
   });
 
   return NextResponse.json({ ok: true });

@@ -28,6 +28,9 @@ function isTwilioConfigured() {
   );
 }
 
+// Twilio sandbox has a 1600-char limit; production WhatsApp API does not.
+const TWILIO_MAX_CHARS = 1550;
+
 export async function sendWhatsApp(input: WhatsAppInput): Promise<WhatsAppResult> {
   if (!isTwilioConfigured()) {
     return { skipped: true, reason: "Twilio no configurado" };
@@ -39,7 +42,11 @@ export async function sendWhatsApp(input: WhatsAppInput): Promise<WhatsAppResult
   const from       = rawFrom.startsWith("whatsapp:") ? rawFrom : `whatsapp:${rawFrom}`;
   const to         = `whatsapp:+${normalizePhone(input.to)}`;
 
-  const body = new URLSearchParams({ From: from, To: to, Body: input.body });
+  const safeBody = input.body.length > TWILIO_MAX_CHARS
+    ? input.body.slice(0, TWILIO_MAX_CHARS - 3) + "..."
+    : input.body;
+
+  const body = new URLSearchParams({ From: from, To: to, Body: safeBody });
 
   const res = await fetch(
     `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`,
@@ -80,7 +87,7 @@ export function buildWelcomeMessage(input: {
     paymentLine = `\n\n💳 *Pagá el alquiler con Mercado Pago:*\nAlias: ${input.paymentCbu}${input.paymentName ? `\nA nombre de: ${input.paymentName}` : ""}`;
   }
 
-  return `Hola ${name}! 🏠 *Ya sos parte de Casita*.\n\nTu propietario te sumó como inquilino de ${location}. Por acá vas a recibir recordatorios de pago y podés subir tus comprobantes.${paymentLine}\n\n👉 Tu casita:\n${input.portalUrl}`;
+  return `Hola ${name}! 🏠 *Ya sos parte de Casita*.\n\nTu propietario te sumó como inquilino de ${location}. Por acá podés:${paymentLine}\n\n✅ Recibir recordatorios de pago\n📎 Subir comprobantes\n🔧 Mandar reclamos o reportar problemas\n📄 Consultar tu contrato\n\nEscribime cuando quieras — estoy acá.\n\n👉 Tu portal:\n${input.portalUrl}`;
 }
 
 /* ── Reminder message builder ────────────────────────────────── */

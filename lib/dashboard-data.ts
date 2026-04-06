@@ -20,8 +20,6 @@ function serializeWorkspace(workspace: {
   mpUserId:               string | null;
   mpAccessTokenEncrypted: string | null;
   mpPaymentLink:          string | null;
-  whatsappEnabled:        boolean;
-  ownerPhone:             string | null;
   createdAt: Date;
   updatedAt: Date;
   properties: Array<{
@@ -93,7 +91,10 @@ function serializeWorkspace(workspace: {
       }>;
     }>;
   }>;
-}) {
+},
+// ownerPhone and whatsappEnabled are account-level (OwnerProfile), passed separately.
+ownerProfile?: { phone: string | null; whatsappEnabled: boolean } | null,
+) {
   return {
     id: workspace.id,
     ownerId: workspace.ownerId,
@@ -108,8 +109,8 @@ function serializeWorkspace(workspace: {
     mpPublicKey: workspace.mpPublicKey,
     mpUserId: workspace.mpUserId,
     mpPaymentLink: workspace.mpPaymentLink,
-    whatsappEnabled: workspace.whatsappEnabled,
-    ownerPhone: workspace.ownerPhone,
+    whatsappEnabled: ownerProfile?.whatsappEnabled ?? false,
+    ownerPhone: ownerProfile?.phone ?? null,
     createdAt: workspace.createdAt.toISOString(),
     updatedAt: workspace.updatedAt.toISOString(),
     properties: workspace.properties.map((property) => ({
@@ -239,12 +240,17 @@ export async function getWorkspaceDetail(ownerId: string, workspaceId: string) {
     return { workspace: null, counters: null, pastRentals: [], claims: [] };
   }
 
+  const ownerProfile = await prisma.ownerProfile.findUnique({
+    where: { ownerId },
+    select: { phone: true, whatsappEnabled: true },
+  });
+
   const obligations = workspaceFull.properties.flatMap((property) =>
     property.units.flatMap((unit) => unit.obligations)
   );
 
   const counters = buildCounters(obligations);
-  const safeWorkspace = serializeWorkspace(workspaceFull);
+  const safeWorkspace = serializeWorkspace(workspaceFull, ownerProfile);
 
   /* Past rentals — inactive units, lightweight */
   const property = workspaceFull.properties[0];

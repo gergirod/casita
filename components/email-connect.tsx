@@ -2,106 +2,33 @@
 
 import { useState } from "react";
 
-type Provider = "gmail" | "outlook" | "yahoo" | "imap";
-
 type Props = {
-  workspaceId:     string;
-  connectedEmail:  string | null;
-  connectedAt:     string | null;   /* ISO string */
-  onConnected:     () => void;
-  onDisconnected:  () => void;
+  workspaceId: string;
+  connectedEmail: string | null;
+  connectedAt: string | null;
+  googleOAuthEnabled: boolean;
+  microsoftOAuthEnabled: boolean;
+  onDisconnected: () => void;
+  /** kept for API compatibility with callers that pass it — ignored here */
+  onConnected?: () => void;
 };
 
-const PROVIDERS: { id: Provider; label: string; hint: string }[] = [
-  {
-    id:    "gmail",
-    label: "Gmail",
-    hint:  "Necesitás una Contraseña de aplicación (no tu contraseña de Gmail). Activá 2FA primero en myaccount.google.com",
-  },
-  {
-    id:    "outlook",
-    label: "Outlook",
-    hint:  "Generá una Contraseña de aplicación en account.live.com/proofs",
-  },
-  {
-    id:    "yahoo",
-    label: "Yahoo",
-    hint:  "Generá una Contraseña de aplicación en login.yahoo.com/account/security",
-  },
-  {
-    id:    "imap",
-    label: "Otro",
-    hint:  "Ingresá los datos IMAP de tu proveedor de email.",
-  },
-];
-
-const APP_PASSWORD_LINKS: Record<Provider, string> = {
-  gmail:   "https://myaccount.google.com/apppasswords",
-  outlook: "https://account.live.com/proofs/AppPassword",
-  yahoo:   "https://login.yahoo.com/account/security",
-  imap:    "",
-};
-
-const PROVIDER_UI: Record<Provider, { title: string; mark: string; tint: string; border: string }> = {
-  gmail: { title: "Gmail", mark: "G", tint: "#f8f2ef", border: "#f0d6c8" },
-  outlook: { title: "Outlook", mark: "O", tint: "#eef4fb", border: "#c9dcef" },
-  yahoo: { title: "Yahoo", mark: "Y", tint: "#f4f0fb", border: "#d9cdef" },
-  imap: { title: "Otro IMAP", mark: "@", tint: "#f3f7f5", border: "#a7f3d0" },
-};
-
-export function EmailConnect({ workspaceId, connectedEmail, connectedAt, onConnected, onDisconnected }: Props) {
-  const [open,        setOpen]        = useState(false);
-  const [provider,    setProvider]    = useState<Provider>("gmail");
-  const [email,       setEmail]       = useState("");
-  const [password,    setPassword]    = useState("");
-  const [imapHost,    setImapHost]    = useState("");
-  const [imapPort,    setImapPort]    = useState("993");
-  const [loading,     setLoading]     = useState(false);
-  const [running,     setRunning]     = useState(false);
-  const [error,       setError]       = useState<string | null>(null);
-  const [runInfo,     setRunInfo]     = useState<string | null>(null);
+export function EmailConnect({
+  workspaceId,
+  connectedEmail,
+  connectedAt,
+  googleOAuthEnabled,
+  microsoftOAuthEnabled,
+  onDisconnected,
+}: Props) {
+  const [loading, setLoading] = useState(false);
+  const [running, setRunning] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [runInfo, setRunInfo] = useState<string | null>(null);
   const [confirmDisc, setConfirmDisc] = useState(false);
 
-  const selectedProvider = PROVIDERS.find((p) => p.id === provider)!;
-  const providerActionLabel =
-    provider === "gmail"
-      ? "Conectar Gmail"
-      : provider === "outlook"
-        ? "Conectar Outlook"
-        : provider === "yahoo"
-          ? "Conectar Yahoo"
-          : "Conectar IMAP";
-
-  async function handleConnect() {
-    setLoading(true);
-    setError(null);
-    try {
-      const body: Record<string, unknown> = { emailProvider: provider, emailAddress: email, password };
-      if (provider === "imap") {
-        body.imapHost = imapHost;
-        body.imapPort = parseInt(imapPort, 10);
-      }
-
-      const res = await fetch(`/api/workspaces/${workspaceId}/email-connect`, {
-        method:  "POST",
-        headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify(body),
-      });
-
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error ?? "Error al conectar");
-      }
-
-      setOpen(false);
-      setPassword("");
-      onConnected();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Error al conectar");
-    } finally {
-      setLoading(false);
-    }
-  }
+  const googleUrl = `/api/auth/google-email/start?workspaceId=${workspaceId}`;
+  const microsoftUrl = `/api/auth/microsoft-email/start?workspaceId=${workspaceId}`;
 
   async function handleDisconnect() {
     setLoading(true);
@@ -130,7 +57,6 @@ export function EmailConnect({ workspaceId, connectedEmail, connectedAt, onConne
         `Escaneo finalizado: ${data.processed ?? 0} factura(s) cargada(s)` +
         (typeof data.skipped === "number" ? ` · ${data.skipped} proveedor(es) sin cambios` : "")
       );
-      onConnected();
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo ejecutar");
     } finally {
@@ -146,15 +72,14 @@ export function EmailConnect({ workspaceId, connectedEmail, connectedAt, onConne
 
     return (
       <div style={{
-        background:   "var(--c-surface)",
-        border:       "1.5px solid var(--c-border)",
+        background: "var(--c-surface)",
+        border: "1.5px solid var(--c-border)",
         borderRadius: "1rem",
-        padding:      "1rem 1.2rem",
-        display:      "flex",
+        padding: "1rem 1.2rem",
+        display: "flex",
         flexDirection: "column",
-        gap:          "0.6rem",
+        gap: "0.6rem",
       }}>
-        {/* Header */}
         <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
           <span style={{
             width: "8px", height: "8px", borderRadius: "50%",
@@ -200,13 +125,8 @@ export function EmailConnect({ workspaceId, connectedEmail, connectedAt, onConne
           </button>
         </div>
 
-        {runInfo && (
-          <p style={{ margin: 0, fontSize: "0.74rem", color: "#059669" }}>{runInfo}</p>
-        )}
-
-        {error && (
-          <p style={{ margin: 0, fontSize: "0.75rem", color: "#dc2626" }}>{error}</p>
-        )}
+        {runInfo && <p style={{ margin: 0, fontSize: "0.74rem", color: "#059669" }}>{runInfo}</p>}
+        {error && <p style={{ margin: 0, fontSize: "0.75rem", color: "#dc2626" }}>{error}</p>}
 
         {confirmDisc ? (
           <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
@@ -251,230 +171,100 @@ export function EmailConnect({ workspaceId, connectedEmail, connectedAt, onConne
   }
 
   /* ── Not connected ─────────────────────────────────────────── */
-  if (!open) {
-    return (
-      <div style={{
-        background:   "var(--c-surface)",
-        border:       "1.5px dashed var(--c-border)",
-        borderRadius: "1rem",
-        padding:      "1.2rem",
-        display:      "flex",
-        flexDirection: "column",
-        gap:          "0.75rem",
-        alignItems:   "flex-start",
-      }}>
-        <div style={{ display: "flex", flexDirection: "column", gap: "0.2rem" }}>
-          <span style={{ fontWeight: 700, fontSize: "0.9rem", color: "var(--c-text-body)" }}>
-            Automatizar ingesta de facturas
-          </span>
-          <span style={{ fontSize: "0.78rem", color: "var(--c-text-muted)", lineHeight: 1.5 }}>
-            Conectá tu email y Casita va a buscar las facturas de tus proveedores automáticamente, leerlas y notificar a tu inquilino.
-          </span>
-        </div>
+  const neitherConfigured = !googleOAuthEnabled && !microsoftOAuthEnabled;
 
-        <div style={{
-          display: "flex", gap: "0.5rem", flexWrap: "wrap",
-          fontSize: "0.73rem", color: "var(--c-text-muted)",
-        }}>
-          <span>Solo lectura</span>
-          <span>·</span>
-          <span>Nunca escribe ni borra</span>
-          <span>·</span>
-          <span>Podés desconectar cuando quieras</span>
-        </div>
-
-        <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
-          <button
-            onClick={() => setOpen(true)}
-            className="btn-primary"
-            style={{ fontSize: "0.82rem", fontWeight: 700 }}
-          >
-            Conectar email
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  /* ── Connect form ──────────────────────────────────────────── */
   return (
     <div style={{
-      background:   "var(--c-surface)",
-      border:       "1.5px solid var(--c-accent)",
+      background: "var(--c-surface)",
+      border: "1.5px dashed var(--c-border)",
       borderRadius: "1rem",
-      padding:      "1.2rem",
-      display:      "flex",
+      padding: "1.2rem",
+      display: "flex",
       flexDirection: "column",
-      gap:          "1rem",
+      gap: "0.85rem",
     }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-        <div>
-          <p style={{ margin: 0, fontWeight: 700, fontSize: "0.9rem", color: "var(--c-text-body)" }}>
-            Conectar email
-          </p>
-          <p style={{ margin: "0.15rem 0 0", fontSize: "0.75rem", color: "var(--c-text-muted)" }}>
-            Usá una Contraseña de aplicación, no tu contraseña normal.
-          </p>
-        </div>
-        <button
-          onClick={() => { setOpen(false); setError(null); }}
-          style={{ background: "none", border: "none", cursor: "pointer", color: "var(--c-text-muted)", fontSize: "1rem" }}
-        >
-          Cerrar
-        </button>
+      <div style={{ display: "flex", flexDirection: "column", gap: "0.2rem" }}>
+        <span style={{ fontWeight: 700, fontSize: "0.9rem", color: "var(--c-text-body)" }}>
+          Conectar email para buscar facturas
+        </span>
+        <span style={{ fontSize: "0.78rem", color: "var(--c-text-muted)", lineHeight: 1.5 }}>
+          Casita va a buscar las facturas de tus proveedores automáticamente,
+          leerlas y notificar a tu inquilino. Solo lectura — nunca escribe ni borra nada.
+        </span>
       </div>
 
-      {/* Provider selector */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.5rem" }}>
-        {PROVIDERS.map((p) => (
-          <button
-            key={p.id}
-            onClick={() => setProvider(p.id)}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "0.5rem",
-              padding: "0.55rem 0.6rem",
-              borderRadius: "0.7rem",
-              border: provider === p.id ? "1.6px solid var(--c-accent)" : `1.2px solid ${PROVIDER_UI[p.id].border}`,
-              background: provider === p.id ? "var(--c-accent-light)" : "#fff",
-              color: provider === p.id ? "var(--c-accent)" : "#254837",
-              fontWeight: provider === p.id ? 700 : 600,
-              fontSize: "0.79rem",
-              cursor:       "pointer",
-              textAlign:    "left",
-              transition: "all 0.15s ease",
-            }}
-          >
-            <span
-              style={{
-                width: "1.35rem",
-                height: "1.35rem",
-                borderRadius: "0.45rem",
-                display: "inline-grid",
-                placeItems: "center",
-                fontSize: "0.73rem",
-                fontWeight: 800,
-                background: PROVIDER_UI[p.id].tint,
-                border: `1px solid ${PROVIDER_UI[p.id].border}`,
-                color: provider === p.id ? "var(--c-accent)" : "#059669",
-                flexShrink: 0,
-              }}
-            >
-              {PROVIDER_UI[p.id].mark}
-            </span>
-            <span>{PROVIDER_UI[p.id].title}</span>
-          </button>
-        ))}
-      </div>
-
-      {/* Hint */}
-      <div style={{
-        padding: "0.6rem 0.8rem",
-        background: "#f0fdf4",
-        borderRadius: "0.6rem",
-        fontSize: "0.73rem",
-        color: "#059669",
-        lineHeight: 1.5,
-      }}>
-        {selectedProvider.hint}
-        {APP_PASSWORD_LINKS[provider] && (
-          <>
-            {" "}
+      {neitherConfigured ? (
+        <p style={{ margin: 0, fontSize: "0.78rem", color: "#b45309", lineHeight: 1.5 }}>
+          ⚠️ El administrador aún no configuró los permisos de email. Contactalo para activar esta función.
+        </p>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+          {googleOAuthEnabled && (
             <a
-              href={APP_PASSWORD_LINKS[provider]}
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{ color: "var(--c-accent)", fontWeight: 700, textDecoration: "none" }}
+              href={googleUrl}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "0.6rem",
+                padding: "0.6rem 0.9rem",
+                borderRadius: "0.7rem",
+                border: "1.5px solid #e2d4cc",
+                background: "#fff",
+                color: "#1c1c1e",
+                fontWeight: 700,
+                fontSize: "0.85rem",
+                textDecoration: "none",
+                cursor: "pointer",
+              }}
             >
-              Obtener contraseña de aplicación →
+              <span style={{
+                width: "1.4rem", height: "1.4rem", borderRadius: "0.4rem",
+                background: "#f8f2ef", border: "1px solid #f0d6c8",
+                display: "inline-grid", placeItems: "center",
+                fontSize: "0.72rem", fontWeight: 800, color: "#c0392b", flexShrink: 0,
+              }}>G</span>
+              Conectar con Google
             </a>
-          </>
-        )}
-      </div>
+          )}
 
-      {/* Form fields */}
-      <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem" }}>
-        <input
-          type="email"
-          placeholder="tucuenta@gmail.com"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          style={{
-            padding: "0.6rem 0.8rem", borderRadius: "0.6rem",
-            border: "1.5px solid var(--c-border)", background: "var(--c-bg)",
-            color: "var(--c-text-body)", fontSize: "0.85rem", outline: "none",
-          }}
-        />
-        <input
-          type="password"
-          placeholder="Contraseña de aplicación (16 caracteres)"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          style={{
-            padding: "0.6rem 0.8rem", borderRadius: "0.6rem",
-            border: "1.5px solid var(--c-border)", background: "var(--c-bg)",
-            color: "var(--c-text-body)", fontSize: "0.85rem", outline: "none",
-          }}
-        />
-
-        {provider === "imap" && (
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 80px", gap: "0.5rem" }}>
-            <input
-              type="text"
-              placeholder="imap.tuproveedor.com"
-              value={imapHost}
-              onChange={(e) => setImapHost(e.target.value)}
+          {microsoftOAuthEnabled && (
+            <a
+              href={microsoftUrl}
               style={{
-                padding: "0.6rem 0.8rem", borderRadius: "0.6rem",
-                border: "1.5px solid var(--c-border)", background: "var(--c-bg)",
-                color: "var(--c-text-body)", fontSize: "0.85rem", outline: "none",
+                display: "flex",
+                alignItems: "center",
+                gap: "0.6rem",
+                padding: "0.6rem 0.9rem",
+                borderRadius: "0.7rem",
+                border: "1.5px solid #c9dcef",
+                background: "#fff",
+                color: "#1c1c1e",
+                fontWeight: 700,
+                fontSize: "0.85rem",
+                textDecoration: "none",
+                cursor: "pointer",
               }}
-            />
-            <input
-              type="number"
-              placeholder="993"
-              value={imapPort}
-              onChange={(e) => setImapPort(e.target.value)}
-              style={{
-                padding: "0.6rem 0.8rem", borderRadius: "0.6rem",
-                border: "1.5px solid var(--c-border)", background: "var(--c-bg)",
-                color: "var(--c-text-body)", fontSize: "0.85rem", outline: "none",
-              }}
-            />
-          </div>
-        )}
-      </div>
-
-      {error && (
-        <p style={{ margin: 0, fontSize: "0.75rem", color: "#dc2626" }}>{error}</p>
+            >
+              <span style={{
+                width: "1.4rem", height: "1.4rem", borderRadius: "0.4rem",
+                background: "#eef4fb", border: "1px solid #c9dcef",
+                display: "inline-grid", placeItems: "center",
+                fontSize: "0.72rem", fontWeight: 800, color: "#0078d4", flexShrink: 0,
+              }}>O</span>
+              Conectar con Outlook
+            </a>
+          )}
+        </div>
       )}
 
-      <p style={{ margin: 0, fontSize: "0.73rem", color: "var(--c-text-muted)" }}>
-        Modo seguro: solo lectura. No se modifica ni elimina nada en tu casilla.
-      </p>
+      {error && <p style={{ margin: 0, fontSize: "0.75rem", color: "#dc2626" }}>{error}</p>}
 
-      <div style={{ display: "flex", gap: "0.5rem" }}>
-        <button
-          onClick={handleConnect}
-          disabled={loading || !email || !password}
-          className="btn-primary"
-          style={{
-            flex: 1,
-            fontWeight: 700,
-            fontSize: "0.85rem",
-            opacity: loading || !email || !password ? 0.65 : 1,
-          }}
-        >
-          {loading ? "Verificando conexión..." : providerActionLabel}
-        </button>
-        <button
-          onClick={() => { setOpen(false); setError(null); }}
-          className="btn-secondary"
-          style={{ fontSize: "0.85rem" }}
-        >
-          Cancelar
-        </button>
+      <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", fontSize: "0.72rem", color: "var(--c-text-muted)" }}>
+        <span>Solo lectura</span>
+        <span>·</span>
+        <span>Nunca escribe ni borra</span>
+        <span>·</span>
+        <span>Podés desconectar cuando quieras</span>
       </div>
     </div>
   );
