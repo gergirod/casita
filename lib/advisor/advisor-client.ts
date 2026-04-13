@@ -45,7 +45,7 @@ export async function callAdvisor(input: AdvisorInput): Promise<AdvisorOutput> {
   try {
     const completion = await Promise.race([
       openai.chat.completions.create({
-        model: "gpt-4o",
+        model: "gpt-5.4-mini",
         temperature: 0.2,
         max_completion_tokens: 800,
         response_format: { type: "json_object" },

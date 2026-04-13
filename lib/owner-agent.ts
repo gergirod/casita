@@ -1335,7 +1335,7 @@ async function extractContractMetadata(fileBuffer: Buffer, mimeType: string): Pr
         ];
 
     const resp = await openai.chat.completions.create({
-      model: "gpt-4o",
+      model: "gpt-5.4",
       temperature: 0,
       max_completion_tokens: 400,
       messages: [{ role: "user", content: userContent }],
@@ -1922,7 +1922,7 @@ async function askContractTool(ownerId: string, wsId: string | undefined, questi
   // If we have cached text, use it (fast + cheap)
   if (unit.contractText) {
     const completion = await openai.chat.completions.create({
-      model: "gpt-4o",
+      model: "gpt-5.4",
       messages: [
         {
           role: "system",
@@ -2010,7 +2010,7 @@ export async function handleOwnerMessage(input: {
     ];
 
     let response = await openai.chat.completions.create({
-      model: "gpt-4o", messages, tools, temperature: 0.3, max_completion_tokens: 2000,
+      model: "gpt-5.4", messages, tools, temperature: 0.3, max_completion_tokens: 2000,
     });
     let choice = response.choices[0];
     let currentMessages = [...messages];
@@ -2025,7 +2025,7 @@ export async function handleOwnerMessage(input: {
         currentMessages.push({ role: "tool", tool_call_id: tc.id, content: result });
       }
       response = await openai.chat.completions.create({
-        model: "gpt-4o", messages: currentMessages, tools, temperature: 0.3, max_completion_tokens: 2000,
+        model: "gpt-5.4", messages: currentMessages, tools, temperature: 0.3, max_completion_tokens: 2000,
       });
       choice = response.choices[0];
     }
@@ -2042,7 +2042,7 @@ export async function handleOwnerMessage(input: {
         }
       }
       response = await openai.chat.completions.create({
-        model: "gpt-4o", messages: currentMessages, temperature: 0.3, max_completion_tokens: 2000,
+        model: "gpt-5.4", messages: currentMessages, temperature: 0.3, max_completion_tokens: 2000,
       });
       choice = response.choices[0];
     }
@@ -2050,7 +2050,7 @@ export async function handleOwnerMessage(input: {
     // Last resort: if still no text content after all rounds, force a plain text response
     if (!choice.message.content) {
       response = await openai.chat.completions.create({
-        model: "gpt-4o",
+        model: "gpt-5.4",
         messages: [
           ...currentMessages,
           { role: "user", content: "[Sistema: Respondé al último mensaje del propietario en texto plano, sin llamar tools.]" },
