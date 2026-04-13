@@ -1,6 +1,6 @@
 {
   "name": "@casita/dale-plugin",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Dale connector plugin for Casita rental operations",
   "main": "src/index.ts",
   "types": "src/index.ts",
@@ -9,7 +9,8 @@
     "type-check": "tsc --noEmit"
   },
   "devDependencies": {
-    "typescript": "^5.0.0"
+    "typescript": "^5.0.0",
+    "@types/node": "^20.0.0"
   },
   "keywords": ["dale", "casita", "rental", "whatsapp", "latam"],
   "license": "MIT"
