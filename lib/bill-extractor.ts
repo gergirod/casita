@@ -1,5 +1,4 @@
 import OpenAI from "openai";
-import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
 
 export type BillExtraction = {
   totalAmount: number | null;
@@ -68,6 +67,7 @@ export async function extractBillData(
     // PDF: use pdfjs-dist to extract the text layer (works in Node.js without DOM).
     let extractedText = "";
     try {
+      const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs");
       const uint8 = new Uint8Array(buffer);
       const doc = await pdfjsLib.getDocument({ data: uint8, useWorkerFetch: false, isEvalSupported: false, useSystemFonts: true }).promise;
       const pages: string[] = [];
