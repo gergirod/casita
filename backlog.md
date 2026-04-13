@@ -1,73 +1,82 @@
 # Backlog
 
-## Próximo sprint
+_Última actualización: 6 de abril 2026_
 
-- **Obligaciones de alquiler automáticas**: hoy el alquiler solo aparece en la vista mensual si se creó manualmente. Debería generarse automáticamente el 1ro de cada mes para todas las casitas activas.
-- **Notificación al propietario cuando el inquilino sube comprobante**: hoy no hay alerta.
-- **Verificación de comprobante desde el dashboard**: botón para marcar como verificado.
+---
 
-## Mediano plazo
+## ✅ Ya implementado (no repetir)
 
-- **Usuario que es owner e inquilino con el mismo teléfono**: hoy el router prioriza siempre owner. Si un owner también es inquilino en otra casita, ese número nunca puede hablar como inquilino. Decisión de MVP: aceptable (caso muy raro). Posibles soluciones futuras: keyword "modo inquilino" para cambiar contexto, o permitir un segundo número por rol.
+- Owner bot con 20+ tools (`lib/owner-agent.ts`)
+- Phone routing owner/tenant (`lib/phone-router.ts`)
+- Gmail OAuth + Microsoft OAuth a nivel cuenta (`OwnerProfile`)
+- Búsqueda de facturas en Gmail por proveedor y por custom sender
+- Expensas: custom sender pattern por template (`ObligationTemplate.customSenderPattern`)
+- `list_recent_emails` — lista emails sin AI extraction para que el owner elija
+- `process_specific_email` — procesa el email elegido por el owner
+- `check_setup` tool — prerequisite checker driven por `lib/agent-checklist.ts`
+- `agent-checklist.ts` — fuente de verdad para reglas y loops de refinamiento
+- Manejo de límite Twilio sandbox (log + guardar reply no entregado en DB)
+- Modelo Claim persistido
+- RAG de contrato (text en contexto)
+- Settings panel mobile-friendly en dashboard
+- WhatsApp onboarding banner en dashboard
 
-- Mercado Pago payment link en la obligación de alquiler
-- Webhook MP para verificación automática
-- WhatsApp reminders (Twilio o Meta Cloud API)
-- Historial de aumentos de alquiler visible en la casita
-- Gemini: mejorar extracción (manejar más formatos de boleta AR)
+---
 
-### 💬 Chat Casita por WhatsApp (tenant-first)
+## 🔥 Próximo sprint
 
-> El inquilino se maneja 100% desde WhatsApp, sin abrir ningún portal.
+- **Obligaciones de alquiler automáticas**: generar obligación de alquiler el 1ro de cada mes para todas las casitas activas. Hoy solo se crea si el owner lo pide manualmente.
+- **Notificación al owner cuando el inquilino sube comprobante**: hoy no hay alerta proactiva al owner bot.
+- **Verificación de comprobante desde el dashboard**: botón para marcar como verificado sin pasar por WhatsApp.
+- **Pasar a producción Twilio**: eliminar el límite de 50 msgs/día del sandbox. Requiere número real + Meta Business verification.
 
-**MVP técnico implementado:**
-1. `POST /api/webhooks/twilio-whatsapp` con verificación de firma Twilio (production) y bridge a n8n.
-2. `GET /api/tenant-by-phone` con normalización de teléfono para resolver unidad por WhatsApp.
-3. `POST /api/tenant/[token]/proof-url` para guardar media de Twilio como comprobante en Supabase.
-4. `POST /api/tenant/[token]/note` para registrar mensajes/reclamos como items visibles para owner.
-5. Etiqueta de origen en dashboard (`WhatsApp`) para items `sourceType: n8n`.
-6. Documentación y workflow importable de n8n (`docs/whatsapp-bot-mvp.md` y `docs/n8n-whatsapp-bot-mvp.workflow.json`).
+---
 
-**Agente inteligente implementado (reemplaza n8n):**
-- OpenAI Function Calling con gpt-4o-mini (sin LangGraph, sin n8n para bot).
-- Tools: `get_obligations`, `get_payment_info`, `save_proof`, `save_claim`, `get_contract_info`.
-- Memory: últimos 10 mensajes por teléfono (`ChatMessage` model).
-- Multi-round tool calls (hasta 3 rondas).
-- System prompt hardened con anti-injection.
-- `save_proof` sube comprobante a Supabase y notifica al owner.
-- Fallback a regex si `OPENAI_API_KEY` no está configurada.
+## 📋 Mediano plazo
 
-**Follow-ups pendientes:**
-- ~~**Owner bot**: agente para el propietario por WhatsApp~~ ✅ Implementado en `lib/owner-agent.ts` con 19 tools (overview, obligaciones, verificar pagos, crear cobros, crear/borrar casitas, alta/baja alquiler, recordatorios inmediatos y programados, listar/cancelar recordatorios, bienvenida, subir facturas, buscar facturas en email por proveedor o administración custom). Phone routing via `lib/phone-router.ts`. Alertas proactivas al owner via cron (`/api/cron/owner-alerts`). Recordatorios programados procesados cada 15 min (`/api/cron/process-reminders`).
-- **RAG de contrato**: permitir al inquilino hacer preguntas sobre su contrato (parseo de PDF + context window). Evaluar si embeddings o simplemente incluir texto en prompt.
-- **Guardar reminders en ChatMessage**: para que el bot tenga contexto cuando el inquilino responde a un recordatorio.
-- **Comunicación entre agentes**: cuando el tenant sube comprobante, notificar al owner bot proactivamente. Cuando el owner verifica, notificar al tenant. Evaluar modelo pub/sub o mensajes directos entre agentes.
-- **Observabilidad**: trazas por `messageSid`, retries e idempotencia.
-- **Modelo Claim**: persistir reclamos en un modelo dedicado (hoy se logean a console).
-- **Limpieza de ChatMessage**: job periódico para borrar mensajes viejos (>30 días).
+### Bot / agente
+- **Comunicación entre agentes**: cuando tenant sube comprobante → notificar owner bot. Cuando owner verifica → notificar tenant. Evaluar pub/sub o mensajes directos.
+- **Guardar reminders en ChatMessage**: el bot no tiene contexto cuando el inquilino responde a un recordatorio.
+- **Loop de búsqueda de facturas por proveedor**: igual que expensas, si no encuentra → `list_recent_emails` → user elige. Hoy solo expensas tiene este loop.
+- **`save_custom_sender` por subject keyword**: además del remitente, guardar una pista del asunto (ej: "LIQUIDACION") para filtrar emails en futuras búsquedas sin AI extraction en newsletters.
+- **Outlook: `listRecentEmailsFromSender` y `processSpecificEmail`**: hoy solo existen para Gmail. Hay que implementar equivalentes en `outlook-api.ts`.
 
-## Largo plazo
+### Datos / DB
+- **Historial de aumentos de alquiler**: guardar cada cambio de monto con fecha y motivo. Visible en el dashboard de la casita.
+- **Limpieza de ChatMessage**: job periódico para borrar mensajes >30 días.
+- **Limpieza de debug logs**: sacar los `console.log([gmail-debug] ...)` antes de producción.
 
-- **Gmail API + Microsoft Graph OAuth**: reemplazar IMAP por OAuth2 nativo. Gmail API para Gmail users, Microsoft Graph para Outlook/Hotmail. Cubre 95% de LATAM. IMAP queda como fallback para Yahoo/otros. Ventajas: sin app passwords (mejor UX), búsqueda más potente, tokens renovables. Alternativa: Nylas v3 como API unificada (costo por cuenta).
+### Dashboard
+- **Vista de facturas por casita**: listado de facturas subidas con PDF descargable, monto, período y estado.
+- **Historial de obligaciones**: ver todas las obligaciones (pagas, pendientes, vencidas) por unidad en una timeline.
+
+### Observabilidad
+- Trazas por `messageSid` — idempotencia y retries en webhook
+- Rate limiting propio para evitar floods
+
+---
+
+## 🔭 Largo plazo
+
 - Dashboard multi-casita con filtros y analytics
-- CSV export
-- Más proveedores de pago (Stripe, transferencias)
-- Modo asistente (acceso compartido para una persona de confianza)
+- CSV export de obligaciones y pagos
+- Más proveedores de pago (Stripe, transferencias bancarias directas)
+- Modo asistente (acceso compartido para una persona de confianza del owner)
+- Gemini/GPT Vision: mejorar extracción de facturas escaneadas o en imagen
+- Multi-idioma (portugués para Brasil)
 
-## n8n (pendiente de diseño UX)
+---
 
-n8n puede usarse para:
-- Ingestión de emails con boletas
-- Notificaciones salientes (WhatsApp, email) como alternativa al cron
+## 👤 Edge cases pendientes
 
-Requiere pensar bien el flujo antes de implementar.
-No reemplaza la lógica de negocio central (statuses, templates, amounts).
+- **Usuario que es owner e inquilino con el mismo teléfono**: el router hoy siempre prioriza owner. Solución futura: keyword "modo inquilino" para cambiar contexto, o segundo número por rol.
 
-## Descartado para MVP
+---
+
+## ❌ Descartado para MVP
 
 - Autopago de servicios de terceros
-- Suite contable
-- Portal de inmobiliaria
+- Suite contable / conciliación bancaria
+- Portal de inmobiliaria / marketplace
 - Cobranzas / acciones legales
-- Conciliación bancaria
-- Marketplace de propiedades
+- n8n para lógica de negocio central (solo puede usarse para jobs y notificaciones secundarias)

@@ -19,14 +19,6 @@ model Workspace {
   n8nWebhookUrl String?    /* n8n outbound: nuestra app POST acá para enviar mensajes */
   n8nSecret     String?    /* secret que valida que somos nosotros */
 
-  /* Conexión de email para ingesta automática de facturas */
-  emailProvider          String?   /* "gmail" | "gmail-oauth" | "outlook" | "yahoo" | "imap" */
-  emailAddress           String?
-  emailEncryptedPassword String?   /* AES-256 cifrado — IMAP app password */
-  emailRefreshToken      String?   /* AES-256 cifrado — OAuth2 refresh token */
-  imapHost               String?   /* custom IMAP host */
-  imapPort               Int?      /* default 993 */
-  emailConnectedAt       DateTime?
   /* Mercado Pago connection */
   mpEnabled              Boolean   @default(false)
   mpAccessTokenEncrypted String?
@@ -43,16 +35,26 @@ model Workspace {
   @@index([ownerId])
 }
 
-// One profile per owner account — stores WhatsApp phone and global settings.
-// Intentionally decoupled from Workspace so the phone is registered once,
+// One profile per owner account — stores WhatsApp phone, email connection and global settings.
+// Intentionally decoupled from Workspace so config is registered once,
 // not repeated on every property the owner creates.
 model OwnerProfile {
   id              String   @id @default(cuid())
   ownerId         String   @unique
   phone           String?
   whatsappEnabled Boolean  @default(false)
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+
+  /* Email connection for automatic bill fetching — account-level, one inbox for all casitas */
+  emailProvider          String?   /* "gmail-oauth" | "outlook-oauth" */
+  emailAddress           String?
+  emailEncryptedPassword String?   /* AES-256 — legacy IMAP app password */
+  emailRefreshToken      String?   /* AES-256 — OAuth2 refresh token */
+  imapHost               String?
+  imapPort               Int?
+  emailConnectedAt       DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([phone])
 }
@@ -138,7 +140,10 @@ model ObligationTemplate {
   amount      Decimal        @db.Decimal(12, 2)
   currency        String         @default("ARS")
   dueDay          Int
-  providerSlug    String?
+  providerSlug          String?
+  /* Custom email sender pattern for non-standard bills (expensas, etc.)
+     e.g. "simplesolutions.com.ar" or "Venice Tigre" */
+  customSenderPattern   String?
   /* manual | auto_email */
   ingestionMode   String         @default("manual")
   /* monthly | bimonthly | quarterly — cuándo buscar en el email */
@@ -210,6 +215,7 @@ enum ObligationType {
 
 enum ObligationSourceType {
   recurring_rent
+  recurring
   manual
   n8n
 }

@@ -8,9 +8,9 @@ import { TenantLinkCopier } from "@/components/tenant-link-copier";
 import { UnitEditor } from "@/components/unit-editor";
 import { WorkspaceSettings } from "@/components/workspace-settings";
 import { ClaimsPanel } from "@/components/claims-panel";
+import { ProofPendingPanel } from "@/components/proof-pending-panel";
 import { ActivityFeed } from "@/components/activity-feed";
-import { isGoogleOAuthConfigured } from "@/lib/google-oauth";
-import { isMicrosoftOAuthConfigured } from "@/lib/microsoft-oauth";
+import { prisma } from "@/lib/prisma";
 export default async function WorkspacePage({
   params,
 }: {
@@ -28,6 +28,13 @@ export default async function WorkspacePage({
   }
 
   const { workspace, counters, pastRentals, claims } = workspaceData;
+
+  /* Email is now account-level — read from OwnerProfile */
+  const ownerProfile = await prisma.ownerProfile.findUnique({
+    where: { ownerId: owner.id },
+    select: { emailAddress: true },
+  });
+  const emailConnected = !!ownerProfile?.emailAddress;
 
   // Fetched after the main workspace data — never throws (returns [] on miss)
   const recentActivity = workspace
@@ -116,6 +123,18 @@ export default async function WorkspacePage({
           Volver
         </Link>
         <div style={{ flex: 1 }} />
+        <Link
+          href="/dashboard/settings"
+          style={{
+            fontSize: "0.8rem",
+            color: "#6b7280",
+            textDecoration: "none",
+            fontWeight: 500,
+            padding: "0.3rem 0.6rem",
+          }}
+        >
+          Ajustes
+        </Link>
         <SignOutButton />
       </header>
 
@@ -213,6 +232,28 @@ export default async function WorkspacePage({
             )}
           </div>
 
+          {/* No-email warning — shown when tenant exists but has no email */}
+          {unit?.tenantContact && !unit.tenantContact.email && (
+            <div style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "0.5rem",
+              padding: "0.45rem 0.75rem",
+              background: "#fffbeb",
+              border: "1px solid #fde68a",
+              borderRadius: "8px",
+              fontSize: "0.76rem",
+              color: "#92400e",
+              fontWeight: 500,
+            }}>
+              <span>⚠️</span>
+              <span>
+                <strong>{unit.tenantContact.fullName}</strong> no tiene email — los recordatorios de pago no le van a llegar.{" "}
+                Agregalo en <strong>Configuración</strong> (ícono ⚙️ arriba a la derecha).
+              </span>
+            </div>
+          )}
+
           {/* Focus text — only when there's something to say */}
           {!allZero && (
             <p style={{
@@ -230,6 +271,22 @@ export default async function WorkspacePage({
           )}
         </div>
 
+        {/* Comprobantes a verificar — surface all proof_uploaded obligations at a glance */}
+        {proofPending.length > 0 && (
+          <ProofPendingPanel
+            items={proofPending.map((o) => ({
+              id: o.id,
+              title: o.title,
+              amount: Number(o.amount).toLocaleString("es-AR"),
+              currency: o.currency,
+              dueDate: o.dueDate instanceof Date ? o.dueDate.toISOString() : o.dueDate,
+              proofUrl: o.proofUrl,
+              tenantName: o.tenantName,
+              propertyName: o.propertyName,
+            }))}
+          />
+        )}
+
         {/* Cobros — vista mensual navegable */}
         {unit ? (
           <div style={{
@@ -242,9 +299,7 @@ export default async function WorkspacePage({
             <UnitEditor
               unitId={unit.id}
               workspaceId={workspace.id}
-              emailConnected={Boolean(workspace.emailAddress)}
-              googleOAuthEnabled={isGoogleOAuthConfigured()}
-              microsoftOAuthEnabled={isMicrosoftOAuthConfigured()}
+              emailConnected={emailConnected}
               templates={unit.obligationTemplates}
               obligations={unitObligations}
               leaseEndDate={unit.leaseEndDate ?? null}

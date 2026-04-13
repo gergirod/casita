@@ -33,7 +33,10 @@ import { buildGoogleAuthUrl, isGoogleOAuthConfigured } from "@/lib/google-oauth"
 import { buildMicrosoftAuthUrl, isMicrosoftOAuthConfigured } from "@/lib/microsoft-oauth";
 import { searchOutlookByProvider, searchOutlookByCustomSender } from "@/lib/outlook-api";
 import { fetchBillsForWorkspace, searchEmailByProvider, searchEmailByCustomSender, resolveProviderSlugs } from "@/lib/mail-fetcher";
-import { searchGmailByProvider, searchGmailByCustomSender } from "@/lib/gmail-api";
+import { searchGmailByProvider, searchGmailByCustomSender, listRecentEmailsFromSender, processSpecificEmail } from "@/lib/gmail-api";
+import { PROVIDERS } from "@/lib/providers";
+import { checkSetup, AGENT_CHECKLIST_PROMPT } from "@/lib/agent-checklist";
+import { toolAdvisorGate, messageAdvisorGate } from "@/lib/advisor/advisor-gate";
 
 const MAX_HISTORY = 12;
 const MAX_TOOL_ROUNDS = 3;
@@ -344,6 +347,7 @@ const tools: OpenAI.ChatCompletionTool[] = [
           media_url: { type: "string", description: "URL del archivo Twilio" },
           type: { type: "string", enum: ["expensas", "electricity", "gas", "water", "internet", "custom"] },
           title: { type: "string", description: "Título descriptivo (ej: 'Factura de luz abril')" },
+          template_id: { type: "string", description: "ID del ObligationTemplate al que vincular la factura (opcional, obtenido de fetch_bills_from_email o list_obligations)." },
         },
         required: ["workspace_id", "media_url", "type", "title"],
       },
@@ -361,6 +365,100 @@ const tools: OpenAI.ChatCompletionTool[] = [
           media_url: { type: "string", description: "URL del PDF enviado por Twilio (búscala en el historial si el owner la mandó antes)" },
         },
         required: ["workspace_id", "media_url"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "list_recent_emails",
+      description:
+        "Lista los asuntos (subjects) de los últimos emails de un remitente SIN hacer extracción de datos. " +
+        "Usá esto cuando fetch_bills_from_email no encontró facturas — mostrá la lista al owner y pedile que identifique cuál es la liquidación. " +
+        "También sirve para refinar la búsqueda si el owner no recuerda el remitente exacto.",
+      parameters: {
+        type: OBJ,
+        properties: {
+          sender_query:  { type: "string", description: "Remitente o dominio a buscar. Ej: 'simplesolutions.com.ar', 'Venice Tigre'" },
+          workspace_id:  { type: "string", description: "ID del workspace" },
+          max_results:   { type: "number", description: "Máximo de emails a listar (default 10)" },
+        },
+        required: ["sender_query", "workspace_id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "process_specific_email",
+      description:
+        "Procesa un email específico (por messageId) para extraer datos de factura. " +
+        "Usá esto después de que el owner identificó cuál email es la liquidación en la lista de list_recent_emails.",
+      parameters: {
+        type: OBJ,
+        properties: {
+          message_id:   { type: "string", description: "ID del email a procesar (viene de list_recent_emails)" },
+          workspace_id: { type: "string", description: "ID del workspace" },
+          template_id:  { type: "string", description: "ID del template de expensas al que vincular (opcional)" },
+        },
+        required: ["message_id", "workspace_id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "update_obligation",
+      description:
+        "Modifica el monto o la fecha de vencimiento de una obligación existente (este mes). " +
+        "Usalo cuando el owner diga 'cambiá el monto a X' o 'el vencimiento es el 15' después de ver una obligación generada. " +
+        "Para cambiar el template base (todos los meses futuros), usá update_template.",
+      parameters: {
+        type: OBJ,
+        properties: {
+          obligation_id: { type: "string", description: "ID de la obligación a modificar" },
+          amount:        { type: "number", description: "Nuevo monto (opcional)" },
+          due_date:      { type: "string", description: "Nueva fecha de vencimiento en formato YYYY-MM-DD (opcional)" },
+          notes:         { type: "string", description: "Nota opcional para registrar el cambio" },
+        },
+        required: ["obligation_id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "update_template",
+      description:
+        "Modifica el monto base o el día de vencimiento del template de cobro recurrente (afecta meses futuros). " +
+        "Usalo cuando el owner diga 'el alquiler ahora es X' o 'el vencimiento siempre es el 15'. " +
+        "Para modificar solo este mes, usá update_obligation.",
+      parameters: {
+        type: OBJ,
+        properties: {
+          template_id: { type: "string", description: "ID del template a modificar" },
+          amount:      { type: "number", description: "Nuevo monto base para meses futuros (opcional)" },
+          due_day:     { type: "integer", description: "Nuevo día de vencimiento del mes, 1-31 (opcional)" },
+        },
+        required: ["template_id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "check_setup",
+      description:
+        "Verifica los prerequisitos necesarios antes de buscar o subir facturas. " +
+        "Llamá SIEMPRE antes de fetch_bills_from_email o upload_bill si no sabés si el owner tiene todo configurado. " +
+        "Devuelve el estado de cada prerequisito y qué hacer si falta algo.",
+      parameters: {
+        type: OBJ,
+        properties: {
+          action:        { type: "string", description: "Qué quiere hacer el owner. Ej: 'expensas', 'luz', 'gas', 'factura'" },
+          workspace_id:  { type: "string", description: "ID del workspace a verificar" },
+        },
+        required: ["action", "workspace_id"],
       },
     },
   },
@@ -406,6 +504,24 @@ const tools: OpenAI.ChatCompletionTool[] = [
   {
     type: "function",
     function: {
+      name: "save_custom_sender",
+      description:
+        "Guarda el patrón de remitente de expensas (u otras facturas custom) en el template de obligación. " +
+        "Usalo cuando el owner confirma qué administradora/email usa para sus expensas y quiere que lo recuerdes. " +
+        "También activa ingestion_mode auto_email para ese template.",
+      parameters: {
+        type: OBJ,
+        properties: {
+          template_id: { type: "string", description: "ID del ObligationTemplate de expensas" },
+          sender_pattern: { type: "string", description: "Email, dominio o nombre de la administradora. Ej: 'simplesolutions.com.ar' o 'Venice Tigre'" },
+        },
+        required: ["template_id", "sender_pattern"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "update_claim",
       description:
         "Actualiza el estado de un reclamo. Puede marcar como 'in_progress' (en proceso) o 'resolved' (resuelto).",
@@ -426,15 +542,15 @@ const tools: OpenAI.ChatCompletionTool[] = [
       description:
         "Genera un link para que el owner conecte su email (Gmail o Outlook/Hotmail) de forma segura con OAuth. " +
         "El owner hace click, autoriza con Google o Microsoft, y listo — sin contraseñas. " +
+        "El email se conecta a nivel de cuenta, no por casita — alcanza una sola vez para todas las casitas. " +
         "Usalo cuando el owner quiera conectar su email o cuando intente buscar facturas sin email conectado. " +
         "Preguntale al owner si usa Gmail o Outlook/Hotmail antes de generar el link.",
       parameters: {
         type: OBJ,
         properties: {
-          workspace_id: { type: "string" },
           provider: { type: "string", description: "gmail o outlook" },
         },
-        required: ["workspace_id", "provider"],
+        required: ["provider"],
       },
     },
   },
@@ -512,6 +628,7 @@ Cuando el owner diga "hola", "menu", "ayuda" o cualquier saludo general, respond
 • "contrato" — consultar cláusulas del contrato
 • "factura" — subir una factura (mandá el PDF/foto)
 • "buscar facturas" — buscar en tu email conectado
+• "cambiar monto" o "cambiar vencimiento" — actualizar un cobro recurrente
 
 O escribime directamente qué necesitás 👋
 
@@ -534,6 +651,10 @@ REGLAS:
 - Cada mensaje es independiente SALVO cuando hay un archivo pendiente de procesar del turno anterior.
 - Si algo falla o no podés completar una acción, decile al owner que lo puede hacer desde el dashboard.
 - Cuando creás una casita o registrás un inquilino y la respuesta incluye hasWhatsapp: true, SIEMPRE preguntá: "¿Le mando el mensaje de bienvenida por WhatsApp ahora?" — no lo mandés sin confirmación.
+- EDITAR OBLIGACIONES: Cuando el owner diga "cambiá el monto a X", "el vencimiento es el Y" o "modificar" después de que el sistema generó una obligación mensual, identificá si quiere cambiar solo esta mes (update_obligation) o todos los meses futuros (update_template). Si no queda claro, preguntá: "¿Querés cambiar solo este mes o también los próximos?". Para update_obligation necesitás el obligation_id; para update_template necesitás el template_id. Podés obtenerlos con get_overview o get_obligations.
+- EMAIL DEL INQUILINO: Cuando registrés un inquilino (create_casita o create_new_rental), SIEMPRE preguntá el email aunque sea opcional. Decile: "¿Tenés el email del inquilino? Lo necesito para enviarle recordatorios de pago automáticos." Si el owner dice que no lo tiene o que lo agregará después, confirmale: "Perfecto, lo podés agregar en cualquier momento desde el dashboard — sin email los recordatorios no llegan." NO bloquees el registro si no tiene email, es opcional.
+
+${AGENT_CHECKLIST_PROMPT}
 
 CONVERSACIÓN PASO A PASO (MUY IMPORTANTE):
 Para acciones que necesitan varios datos (crear casita, crear cobro, dar de alta inquilino, etc.), NUNCA pidas todos los campos de una. Guiá al owner paso a paso preguntando DE A UNO.
@@ -627,7 +748,8 @@ ${wsList}`;
 async function handleToolCall(
   name: string,
   args: Record<string, unknown>,
-  owner: OwnerContext
+  owner: OwnerContext,
+  gateCtx?: { workspaces: WorkspaceSummary[]; ownerMessage: string }
 ): Promise<string> {
   const a = args as Record<string, string | number | undefined>;
 
@@ -646,9 +768,21 @@ async function handleToolCall(
     case "create_recurring_charge": return createRecurringCharge(owner.ownerId, args);
     case "create_casita": return createCasita(owner.ownerId, args);
     case "create_new_rental": return createNewRental(owner.ownerId, args);
-    case "end_rental": return endRental(owner.ownerId, a.workspace_id as string);
+    case "end_rental": {
+      if (gateCtx) {
+        const gate = await toolAdvisorGate("end_rental", args, owner, gateCtx);
+        if (!gate.proceed) return gate.stopMessage ?? JSON.stringify({ error: "Operación pausada." });
+      }
+      return endRental(owner.ownerId, a.workspace_id as string);
+    }
     case "update_rent": return updateRent(owner.ownerId, a.workspace_id as string, a.new_amount as number);
-    case "delete_casita": return deleteCasita(owner.ownerId, a.workspace_id as string, a.confirmation as string);
+    case "delete_casita": {
+      if (gateCtx) {
+        const gate = await toolAdvisorGate("delete_casita", args, owner, gateCtx);
+        if (!gate.proceed) return gate.stopMessage ?? JSON.stringify({ error: "Operación pausada." });
+      }
+      return deleteCasita(owner.ownerId, a.workspace_id as string, a.confirmation as string);
+    }
     case "send_reminder": return sendReminderTool(owner.ownerId, a.obligation_id as string);
     case "schedule_reminder": return scheduleReminderTool(owner.ownerId, args);
     case "list_reminders": return listRemindersTool(owner.ownerId, a.workspace_id as string | undefined);
@@ -656,11 +790,129 @@ async function handleToolCall(
     case "send_welcome": return sendWelcomeTool(owner.ownerId, a.workspace_id as string);
     case "upload_bill": return uploadBill(owner.ownerId, args);
     case "upload_contract": return uploadContract(owner.ownerId, args);
+    case "list_recent_emails": {
+      const wId = await resolveWorkspaceId(owner.ownerId, a.workspace_id as string | undefined);
+      if (!wId) return JSON.stringify({ error: "No se encontró workspace_id." });
+      const ownerWs = await prisma.workspace.findUnique({ where: { id: wId }, select: { ownerId: true } });
+      if (!ownerWs) return JSON.stringify({ error: "Workspace no encontrado." });
+      const prof = await prisma.ownerProfile.findUnique({ where: { ownerId: ownerWs.ownerId }, select: { emailProvider: true } });
+      const isGmail = prof?.emailProvider === "gmail-oauth";
+      if (!isGmail) return JSON.stringify({ error: "Solo disponible con Gmail OAuth." });
+      const res = await listRecentEmailsFromSender(wId, a.sender_query as string, (a.max_results as number | undefined) ?? 10);
+      return JSON.stringify({
+        ok: true,
+        emails: res.emails.map((e, i) => ({
+          numero: i + 1,
+          message_id: e.messageId,
+          asunto: e.subject,
+          fecha: e.date,
+          adjunto: e.hasAttachment,
+          preview: e.snippet,
+        })),
+        instruccion: "Mostrale esta lista al owner y preguntale: '¿Cuál de estos es la liquidación de expensas? Decime el número o el nombre del asunto.' Luego llamá process_specific_email con el message_id correspondiente.",
+        errors: res.errors,
+      });
+    }
+    case "process_specific_email": {
+      const wId = await resolveWorkspaceId(owner.ownerId, a.workspace_id as string | undefined);
+      if (!wId) return JSON.stringify({ error: "No se encontró workspace_id." });
+      const { result, error } = await processSpecificEmail(wId, a.message_id as string);
+      if (error || !result) return JSON.stringify({ error: error ?? "No se pudo procesar el email." });
+      const templateId = a.template_id as string | undefined;
+      const needsManualDownload = result.attachmentName === "__needs_manual_download__";
+      return JSON.stringify({
+        ok: true,
+        asunto: result.subject,
+        monto: result.amount ? `ARS ${result.amount}` : "no detectado",
+        vencimiento: result.dueDate ?? "no detectado",
+        periodo: result.period ?? "no detectado",
+        adjunto: needsManualDownload ? "sin adjunto directo" : (result.attachmentName ?? "sin adjunto"),
+        url: result.billUrl,
+        template_id: templateId,
+        ...(needsManualDownload && result.billUrl ? {
+          instruccion: `No puedo descargar el PDF automáticamente. Mostrale al owner: "${result.billUrl}" y pedile que lo descargue y lo mande por acá para subirlo.`,
+        } : {}),
+      });
+    }
+    case "update_obligation": {
+      const obligationId = a.obligation_id as string;
+      if (!obligationId) return JSON.stringify({ error: "obligation_id requerido." });
+
+      const ob = await prisma.obligation.findFirst({
+        where: { id: obligationId, unit: { property: { workspace: { ownerId: owner.ownerId } } } },
+        select: { id: true, title: true, amount: true, dueDate: true, currency: true },
+      });
+      if (!ob) return JSON.stringify({ error: "Obligación no encontrada o no pertenece a este owner." });
+
+      const updateData: Record<string, unknown> = {};
+      if (a.amount   != null) updateData.amount  = a.amount;
+      if (a.due_date != null) updateData.dueDate = new Date(a.due_date as string);
+      if (a.notes    != null) updateData.notes   = a.notes;
+
+      if (Object.keys(updateData).length === 0) {
+        return JSON.stringify({ error: "No se enviaron campos para actualizar (amount, due_date o notes)." });
+      }
+
+      await prisma.obligation.update({ where: { id: obligationId }, data: updateData });
+
+      const newAmount  = a.amount   != null ? a.amount   : Number(ob.amount);
+      const newDueDate = a.due_date != null ? a.due_date : ob.dueDate.toISOString().split("T")[0];
+
+      return JSON.stringify({
+        ok: true,
+        message: `✅ Obligación "${ob.title}" actualizada.`,
+        amount:   `${ob.currency} ${Number(newAmount).toLocaleString("es-AR")}`,
+        due_date: newDueDate,
+      });
+    }
+
+    case "update_template": {
+      const templateId = a.template_id as string;
+      if (!templateId) return JSON.stringify({ error: "template_id requerido." });
+
+      const tpl = await prisma.obligationTemplate.findFirst({
+        where: { id: templateId, unit: { property: { workspace: { ownerId: owner.ownerId } } } },
+        select: { id: true, title: true, amount: true, dueDay: true, currency: true },
+      });
+      if (!tpl) return JSON.stringify({ error: "Template no encontrado o no pertenece a este owner." });
+
+      const updateData: Record<string, unknown> = {};
+      if (a.amount  != null) updateData.amount = a.amount;
+      if (a.due_day != null) {
+        const day = Number(a.due_day);
+        if (day < 1 || day > 31) return JSON.stringify({ error: "due_day debe estar entre 1 y 31." });
+        updateData.dueDay = day;
+      }
+
+      if (Object.keys(updateData).length === 0) {
+        return JSON.stringify({ error: "No se enviaron campos para actualizar (amount o due_day)." });
+      }
+
+      await prisma.obligationTemplate.update({ where: { id: templateId }, data: updateData });
+
+      const newAmount = a.amount  != null ? a.amount  : Number(tpl.amount);
+      const newDay    = a.due_day != null ? a.due_day : tpl.dueDay;
+
+      return JSON.stringify({
+        ok: true,
+        message: `✅ Template "${tpl.title}" actualizado. Los próximos meses se generarán con estos valores.`,
+        amount:   `${tpl.currency} ${Number(newAmount).toLocaleString("es-AR")}`,
+        due_day:  newDay,
+      });
+    }
+
+    case "check_setup": {
+      const wId = await resolveWorkspaceId(owner.ownerId, a.workspace_id as string | undefined);
+      if (!wId) return JSON.stringify({ error: "No se encontró workspace_id." });
+      const report = await checkSetup(a.action as string, wId);
+      return JSON.stringify(report);
+    }
     case "fetch_bills_from_email": return fetchBillsEmail(owner.ownerId, a.workspace_id as string | undefined, a.search_terms as string | undefined, a.custom_sender as string | undefined);
+    case "save_custom_sender": return saveCustomSenderTool(a.template_id as string, a.sender_pattern as string);
     case "get_claims": return getClaimsTool(owner.ownerId, a.workspace_id as string, a.unit_id as string | undefined, a.status as string | undefined);
     case "update_claim": return updateClaimTool(owner.ownerId, a.claim_id as string, a.status as string);
-    case "connect_email_oauth": return connectEmailOAuthTool(owner.ownerId, a.workspace_id as string, a.provider as string);
-    case "check_email_status": return checkEmailStatusTool(owner.ownerId, a.workspace_id as string);
+    case "connect_email_oauth": return connectEmailOAuthTool(owner.ownerId, a.provider as string);
+    case "check_email_status": return checkEmailStatusTool(owner.ownerId);
     case "ask_contract": return askContractTool(owner.ownerId, a.workspace_id as string | undefined, a.question as string);
     default: return JSON.stringify({ error: "Tool no reconocida" });
   }
@@ -954,8 +1206,8 @@ async function sendWelcomeTool(ownerId: string, wsId: string): Promise<string> {
 }
 
 async function uploadBill(ownerId: string, args: Record<string, unknown>): Promise<string> {
-  const { workspace_id, media_url, type, title } = args as {
-    workspace_id: string; media_url: string; type: string; title: string;
+  const { workspace_id, media_url, type, title, template_id } = args as {
+    workspace_id: string; media_url: string; type: string; title: string; template_id?: string;
   };
 
   // Conversational context resolution
@@ -989,6 +1241,7 @@ async function uploadBill(ownerId: string, args: Record<string, unknown>): Promi
     fileBuffer,
     mimeType,
     channel: "whatsapp",
+    ...(template_id ? { templateId: template_id } : {}),
   });
 
   if (!result.ok) return JSON.stringify({ error: result.error });
@@ -1042,7 +1295,7 @@ async function extractContractMetadata(fileBuffer: Buffer, mimeType: string): Pr
         ];
 
     const resp = await openai.chat.completions.create({
-      model: "gpt-5.4-mini",
+      model: "gpt-4o",
       temperature: 0,
       max_completion_tokens: 400,
       messages: [{ role: "user", content: userContent }],
@@ -1169,30 +1422,62 @@ async function uploadContract(ownerId: string, args: Record<string, unknown>): P
   });
 }
 
+async function saveCustomSenderTool(templateId: string, senderPattern: string): Promise<string> {
+  try {
+    // Prefer the email domain over a display name — more reliable for Gmail search.
+    // e.g. "notificacion@simplesolutions.com.ar" → "simplesolutions.com.ar"
+    //      "Venice Tigre" → kept as-is (no @ found)
+    const raw = senderPattern.trim();
+    const emailMatch = raw.match(/[\w.-]+@([\w.-]+\.[a-z]{2,})/i);
+    const normalized = emailMatch ? emailMatch[1] : raw;
+
+    const updated = await prisma.obligationTemplate.update({
+      where: { id: templateId },
+      data: {
+        customSenderPattern: normalized,
+        ingestionMode: "auto_email",
+      },
+      select: { title: true, customSenderPattern: true },
+    });
+    return JSON.stringify({
+      ok: true,
+      saved_as: updated.customSenderPattern,
+      message: `Guardé "${updated.customSenderPattern}" como remitente de "${updated.title}". La próxima vez que busques expensas lo uso automáticamente. Avisale al owner qué guardaste para que pueda corregirlo si hace falta.`,
+    });
+  } catch (err) {
+    return JSON.stringify({ error: `No pude guardar: ${err instanceof Error ? err.message : "desconocido"}` });
+  }
+}
+
 async function fetchBillsEmail(ownerId: string, wsId?: string, searchTerms?: string, customSender?: string): Promise<string> {
   const wId = await resolveWorkspaceId(ownerId, wsId);
   if (!wId) return JSON.stringify({ error: "Necesito workspace_id." });
 
-  const ws = await prisma.workspace.findFirst({
-    where: { id: wId, ownerId },
+  /* Email config is account-level: read from OwnerProfile */
+  const ownerProfile = await prisma.ownerProfile.findUnique({
+    where: { ownerId },
     select: { emailAddress: true, emailProvider: true, emailConnectedAt: true },
   });
 
-  if (!ws?.emailConnectedAt || !ws.emailAddress) {
+  if (!ownerProfile?.emailConnectedAt || !ownerProfile?.emailAddress) {
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+    const settingsLink = `${appUrl}/dashboard/settings`;
     if (isGoogleOAuthConfigured()) {
-      const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
-      const authLink = `${appUrl}/api/auth/google-email/start?workspaceId=${wId}`;
       return JSON.stringify({
         error: "No hay email conectado.",
-        authLink,
-        message: "Podés conectar tu Gmail haciendo click en el link.",
+        settingsLink,
+        message: `Podés conectar tu Gmail desde Ajustes: ${settingsLink}`,
       });
     }
-    return JSON.stringify({ error: "No hay email conectado en esta casita." });
+    return JSON.stringify({
+      error: "No hay email conectado.",
+      settingsLink,
+      message: `Podés conectarlo desde Ajustes: ${settingsLink}`,
+    });
   }
 
-  const isGmailOAuth = ws.emailProvider === "gmail-oauth";
-  const isOutlookOAuth = ws.emailProvider === "outlook-oauth";
+  const isGmailOAuth = ownerProfile.emailProvider === "gmail-oauth";
+  const isOutlookOAuth = ownerProfile.emailProvider === "outlook-oauth";
   const isOAuth = isGmailOAuth || isOutlookOAuth;
 
   if (customSender) {
@@ -1204,21 +1489,32 @@ async function fetchBillsEmail(ownerId: string, wsId?: string, searchTerms?: str
           : await searchEmailByCustomSender(wId, customSender);
       if (result.found.length === 0) {
         const errMsg = result.errors.length > 0 ? ` Errores: ${result.errors.join(", ")}` : "";
-        return JSON.stringify({ message: `No encontré emails recientes de "${customSender}" en ${ws.emailAddress}.${errMsg}` });
+        return JSON.stringify({ message: `No encontré emails recientes de "${customSender}" en ${ownerProfile.emailAddress}.${errMsg}` });
       }
+      // Check if any found bill has amount undetected — may need unit clarification for multi-unit liquidations
+      const missingAmount = result.found.some((f) => f.amount === null);
       return JSON.stringify({
         ok: true,
         message: `Encontré ${result.found.length} email(s) de "${customSender}":`,
-        facturas: result.found.map((f) => ({
-          remitente: f.provider,
-          asunto: f.subject,
-          fecha: f.date,
-          monto: f.amount ? `ARS ${f.amount}` : "no detectado",
-          vencimiento: f.dueDate ?? "no detectado",
-          periodo: f.period ?? "no detectado",
-          adjunto: f.attachmentName ?? "sin adjunto",
-          url: f.billUrl,
-        })),
+        facturas: result.found.map((f) => {
+          const needsManualDownload = f.attachmentName === "__needs_manual_download__";
+          return {
+            remitente: f.provider,
+            asunto: f.subject,
+            fecha: f.date,
+            monto: f.amount ? `ARS ${f.amount}` : "no detectado",
+            vencimiento: f.dueDate ?? "no detectado",
+            periodo: f.period ?? "no detectado",
+            adjunto: needsManualDownload ? "sin adjunto directo" : (f.attachmentName ?? "sin adjunto"),
+            url: f.billUrl,
+            ...(needsManualDownload && f.billUrl ? {
+              instruccion: `NO puedo descargar ni subir esta factura automáticamente. DEBES mostrar el link al owner con el texto: "Acá está tu factura: ${f.billUrl} — Abrila, descargá el PDF y mandámelo por acá para subirlo a la casita."`,
+            } : {}),
+          };
+        }),
+        ...(missingAmount ? {
+          nota_monto: "Si la liquidación cubre múltiples unidades, preguntale al owner cuál es la suya (piso/depto/número) para identificar el monto correcto en el PDF.",
+        } : {}),
         errors: result.errors,
       });
     } catch (err) {
@@ -1227,9 +1523,117 @@ async function fetchBillsEmail(ownerId: string, wsId?: string, searchTerms?: str
   }
 
   if (searchTerms) {
-    const slugs = resolveProviderSlugs(searchTerms);
+    // "expensas" always goes through the custom sender path, NOT standard providers.
+    // Reason: expensas come from building administrators (Venice Tigre, simplesolutions, etc.)
+    // not from standardized platforms. resolveProviderSlugs returns generic expensas-claras
+    // slugs that will never match real emails.
+    const isExpensasQuery = /expensa|consorcio|administra/i.test(searchTerms);
+    const slugs = isExpensasQuery ? [] : resolveProviderSlugs(searchTerms);
+
     if (slugs.length === 0) {
-      return JSON.stringify({ error: `No reconozco el proveedor "${searchTerms}". Proveedores conocidos: edenor, edesur, metrogas, aysa, telecentro, fibertel, personal, movistar. También podés decir "luz", "gas", "agua", "expensas" o "internet". Si es una administración de expensas, decime el nombre y lo busco con custom_sender.` });
+      if (isExpensasQuery) {
+        // ── STEP 1: check if any expensas template exists at all ──────────────
+        const allExpensasTemplates = await prisma.obligationTemplate.findMany({
+          where: {
+            unit: { property: { workspaceId: wId } },
+            type: "expensas",
+            isActive: true,
+          },
+          select: { id: true, title: true, customSenderPattern: true, unit: { select: { identifier: true, property: { select: { name: true } } } } },
+        });
+
+        if (allExpensasTemplates.length === 0) {
+          // No templates at all → guide user to create one first
+          return JSON.stringify({
+            action_required: "create_expensas_template",
+            message: "Antes de buscar las expensas necesitás tener configurado un cobro recurrente de expensas en tu casita. Sin eso no tengo donde subirlas.\n\n¿Querés que lo creemos ahora? Necesito saber:\n1. ¿En cuál casita/unidad?\n2. ¿Cuánto es el monto aproximado? (podés poner 0 si varía)\n3. ¿Cada cuánto vence? (generalmente el 10 de cada mes)",
+            unidades_disponibles: await prisma.unit.findMany({
+              where: { property: { workspaceId: wId }, isActive: true },
+              select: { id: true, identifier: true, property: { select: { name: true } } },
+            }).then(us => us.map(u => ({ id: u.id, label: `${u.property.name} — ${u.identifier}` }))),
+          });
+        }
+
+        // ── STEP 2: has templates — check which have a configured sender ──────
+        const withSender = allExpensasTemplates.filter(t => t.customSenderPattern);
+        const withoutSender = allExpensasTemplates.filter(t => !t.customSenderPattern);
+
+        if (withSender.length > 0) {
+          // ── STEP 3: search email with saved senders ─────────────────────────
+          const allFound = [];
+          const allErrors: string[] = [];
+          for (const t of withSender) {
+            try {
+              const result = isGmailOAuth
+                ? await searchGmailByCustomSender(wId, t.customSenderPattern!)
+                : isOutlookOAuth
+                  ? await searchOutlookByCustomSender(wId, t.customSenderPattern!)
+                  : await searchEmailByCustomSender(wId, t.customSenderPattern!);
+              allFound.push(...result.found.map(f => ({
+                ...f,
+                template_id: t.id,
+                templateTitle: t.title,
+                unidad: `${t.unit.property.name} — ${t.unit.identifier}`,
+              })));
+              allErrors.push(...result.errors);
+            } catch { /* continue */ }
+          }
+
+          const missingAmount = allFound.some((f) => f.amount === null);
+          if (allFound.length > 0) {
+            return JSON.stringify({
+              ok: true,
+              message: `Encontré ${allFound.length} liquidación(es) de expensas:`,
+              facturas: allFound.map(f => {
+                const needsManualDownload = f.attachmentName === "__needs_manual_download__";
+                return {
+                  template_id: (f as { template_id?: string }).template_id,
+                  template: (f as { templateTitle?: string }).templateTitle,
+                  unidad: (f as { unidad?: string }).unidad,
+                  remitente: f.provider,
+                  asunto: f.subject,
+                  fecha: f.date,
+                  monto: f.amount ? `ARS ${f.amount}` : "no detectado",
+                  vencimiento: f.dueDate ?? "no detectado",
+                  periodo: f.period ?? "no detectado",
+                  adjunto: needsManualDownload ? "sin adjunto directo" : (f.attachmentName ?? "sin adjunto"),
+                  url: f.billUrl,
+                  ...(needsManualDownload && f.billUrl ? {
+                    instruccion: `NO puedo descargar esta factura automáticamente. Mostrale al owner el link: "${f.billUrl}" y decile que la descargue y te la mande para subirla.`,
+                  } : {}),
+                  ...(f.attachmentName === "__extracted_from_email__" ? {
+                    instruccion: "Datos extraídos del cuerpo del email (sin PDF descargable). El PDF está disponible solo via el portal/app de la administradora.",
+                  } : {}),
+                };
+              }),
+              ...(missingAmount ? {
+                nota_monto: "Si la liquidación cubre múltiples unidades, preguntale al owner cuál es la suya (piso/depto/número) para identificar el monto correcto.",
+              } : {}),
+              ...(withoutSender.length > 0 ? {
+                templates_sin_remitente: withoutSender.map(t => ({ id: t.id, title: t.title, unidad: `${t.unit.property.name} — ${t.unit.identifier}` })),
+                nota_pendiente: `${withoutSender.length} template(s) de expensas todavía no tienen administradora configurada.`,
+              } : {}),
+              errors: allErrors,
+            });
+          }
+
+          // Senders configured but no emails found
+          return JSON.stringify({
+            message: `Busqué en ${ownerProfile.emailAddress} pero no encontré liquidaciones recientes de: ${withSender.map(t => t.customSenderPattern).join(", ")}`,
+            sugerencia: "¿Querés probar con otro remitente o nombre del consorcio?",
+            templates_configurados: withSender.map(t => ({ id: t.id, title: t.title, sender: t.customSenderPattern })),
+          });
+        }
+
+        // Templates exist but none have a sender configured → ask
+        return JSON.stringify({
+          action_required: "ask_expensas_sender",
+          message: `Tenés ${allExpensasTemplates.length} cobro(s) de expensas configurado(s) pero ninguno tiene la administradora guardada.\n\n¿Desde qué email o nombre te manda las liquidaciones la administración? (Ej: "simplesolutions.com.ar", "consorcio@edificio.com", "Admin Rodríguez")`,
+          templates: allExpensasTemplates.map(t => ({ id: t.id, title: t.title, unidad: `${t.unit.property.name} — ${t.unit.identifier}` })),
+        });
+      }
+
+      return JSON.stringify({ error: `No reconozco el proveedor "${searchTerms}". Proveedores conocidos: edenor, edesur, metrogas, aysa, telecentro, fibertel, personal, movistar. También podés decir "luz", "gas", "agua", "expensas" o "internet".` });
     }
 
     try {
@@ -1238,23 +1642,65 @@ async function fetchBillsEmail(ownerId: string, wsId?: string, searchTerms?: str
         : isOutlookOAuth
           ? await searchOutlookByProvider(wId, slugs)
           : await searchEmailByProvider(wId, slugs);
+      // Find templates BEFORE searching email — guide user if none configured
+      const serviceTypes = [...new Set(
+        slugs.map((s) => PROVIDERS.find((p) => p.slug === s)?.type).filter(Boolean)
+      )] as string[];
+      const matchingTemplates = serviceTypes.length > 0
+        ? await prisma.obligationTemplate.findMany({
+            where: {
+              unit: { property: { workspaceId: wId } },
+              type: { in: serviceTypes as ObligationType[] },
+              isActive: true,
+            },
+            select: { id: true, title: true, type: true, unit: { select: { identifier: true, property: { select: { name: true } } } } },
+          })
+        : [];
+
+      // If no templates configured, we can still search but warn the user they need to set one up
+      const noTemplateWarning = matchingTemplates.length === 0 && serviceTypes.length > 0
+        ? `⚠️ No tenés ningún cobro recurrente de ${serviceTypes.join("/")} configurado en tu casita. Si encontramos la factura, para subirla correctamente necesitás crear el cobro primero. ¿Querés que lo hagamos?`
+        : null;
+
       if (result.found.length === 0) {
         const errMsg = result.errors.length > 0 ? ` Errores: ${result.errors.join(", ")}` : "";
-        return JSON.stringify({ message: `No encontré facturas recientes de ${searchTerms} en ${ws.emailAddress}.${errMsg}` });
+        return JSON.stringify({
+          message: `No encontré facturas recientes de ${searchTerms} en ${ownerProfile.emailAddress}.${errMsg}`,
+          ...(noTemplateWarning ? { setup_hint: noTemplateWarning } : {}),
+        });
       }
+
       return JSON.stringify({
         ok: true,
-        message: `Encontré ${result.found.length} factura(s) en ${ws.emailAddress}:`,
-        facturas: result.found.map((f) => ({
-          proveedor: f.provider,
-          asunto: f.subject,
-          fecha: f.date,
-          monto: f.amount ? `ARS ${f.amount}` : "no detectado",
-          vencimiento: f.dueDate ?? "no detectado",
-          periodo: f.period ?? "no detectado",
-          adjunto: f.attachmentName ?? "sin adjunto",
-          url: f.billUrl,
-        })),
+        message: `Encontré ${result.found.length} factura(s) en ${ownerProfile.emailAddress}:`,
+        facturas: result.found.map((f) => {
+          const needsManualDownload = f.attachmentName === "__needs_manual_download__";
+          return {
+            proveedor: f.provider,
+            asunto: f.subject,
+            fecha: f.date,
+            monto: f.amount ? `ARS ${f.amount}` : "no detectado",
+            vencimiento: f.dueDate ?? "no detectado",
+            periodo: f.period ?? "no detectado",
+            adjunto: needsManualDownload ? "sin adjunto directo" : (f.attachmentName ?? "sin adjunto"),
+            url: f.billUrl,
+            ...(needsManualDownload && f.billUrl ? {
+              instruccion: `NO puedo descargar ni subir esta factura automáticamente. DEBES mostrar el link al owner con el texto: "Acá está tu factura: ${f.billUrl} — Abrila, descargá el PDF y mandámelo por acá para subirlo a la casita."`,
+            } : {}),
+          };
+        }),
+        templates_disponibles: matchingTemplates.length > 0
+          ? matchingTemplates.map((t) => ({
+              template_id: t.id,
+              titulo: t.title,
+              tipo: t.type,
+              unidad: `${t.unit.property.name} — ${t.unit.identifier}`,
+              instruccion: "Si el owner quiere subir la factura, usá upload_bill con este template_id para vincularla. SIEMPRE preguntá antes de subir.",
+            }))
+          : [{
+              advertencia: `No hay cobros de ${serviceTypes.join("/")} configurados en ninguna casita.`,
+              accion_requerida: "Antes de subir la factura, ofrecé crear el cobro recurrente. Preguntá: en qué casita/unidad y cuánto es el monto aproximado.",
+            }],
         errors: result.errors,
       });
     } catch (err) {
@@ -1268,7 +1714,7 @@ async function fetchBillsEmail(ownerId: string, wsId?: string, searchTerms?: str
 
   try {
     const result = await fetchBillsForWorkspace(wId);
-    return JSON.stringify({ ok: true, message: `Búsqueda completa en ${ws.emailAddress}.`, ...result });
+    return JSON.stringify({ ok: true, message: `Búsqueda completa en ${ownerProfile.emailAddress}.`, ...result });
   } catch (err) {
     return JSON.stringify({ error: `Error buscando facturas: ${err instanceof Error ? err.message : "desconocido"}` });
   }
@@ -1294,51 +1740,55 @@ async function updateClaimTool(ownerId: string, claimId: string, newStatus: stri
 
 // ─── Email Connection ────────────────────────────────────────────
 
-async function connectEmailOAuthTool(ownerId: string, wsId: string, provider: string): Promise<string> {
-  const wId = await resolveWorkspaceId(ownerId, wsId);
-  if (!wId) return JSON.stringify({ error: "Necesito workspace_id." });
-
+async function connectEmailOAuthTool(ownerId: string, provider: string): Promise<string> {
   const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
   const isGmail = provider.toLowerCase().includes("gmail") || provider.toLowerCase().includes("google");
 
   if (isGmail) {
     if (!isGoogleOAuthConfigured()) {
-      return JSON.stringify({ error: "Google OAuth no está configurado en el servidor." });
+      return JSON.stringify({ error: "Google OAuth no está configurado. Contactá al soporte." });
     }
-    const authLink = `${appUrl}/api/auth/google-email/start?workspaceId=${wId}`;
-    return JSON.stringify({ ok: true, authLink, provider: "Gmail" });
+    const authLink = `${appUrl}/api/auth/google-email/start?ownerId=${ownerId}`;
+    return JSON.stringify({
+      ok: true,
+      authLink,
+      provider: "Gmail",
+      message: "El email se conecta a nivel de cuenta — alcanza una sola vez para todas tus casitas.",
+    });
   }
 
   if (!isMicrosoftOAuthConfigured()) {
-    return JSON.stringify({ error: "Microsoft OAuth no está configurado en el servidor." });
+    return JSON.stringify({ error: "Microsoft OAuth no está configurado. Contactá al soporte." });
   }
-  const authLink = `${appUrl}/api/auth/microsoft-email/start?workspaceId=${wId}`;
-  return JSON.stringify({ ok: true, authLink, provider: "Outlook" });
+  const authLink = `${appUrl}/api/auth/microsoft-email/start?ownerId=${ownerId}`;
+  return JSON.stringify({
+    ok: true,
+    authLink,
+    provider: "Outlook",
+    message: "El email se conecta a nivel de cuenta — alcanza una sola vez para todas tus casitas.",
+  });
 }
 
-async function checkEmailStatusTool(ownerId: string, wsId: string): Promise<string> {
-  const wId = await resolveWorkspaceId(ownerId, wsId);
-  if (!wId) return JSON.stringify({ error: "Necesito workspace_id." });
-
-  const ws = await prisma.workspace.findUnique({
-    where: { id: wId },
+async function checkEmailStatusTool(ownerId: string): Promise<string> {
+  const profile = await prisma.ownerProfile.findUnique({
+    where: { ownerId },
     select: { emailAddress: true, emailProvider: true, emailConnectedAt: true },
   });
 
-  if (!ws) return JSON.stringify({ error: "Workspace no encontrado." });
-
-  if (!ws.emailAddress) {
+  if (!profile?.emailAddress) {
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
     return JSON.stringify({
       connected: false,
-      message: "No hay email conectado. El owner puede conectarlo acá mismo por WhatsApp.",
+      message: `No hay email conectado. Podés conectarlo desde Ajustes: ${appUrl}/dashboard/settings`,
     });
   }
 
   return JSON.stringify({
     connected: true,
-    email: ws.emailAddress,
-    provider: ws.emailProvider,
-    connectedAt: ws.emailConnectedAt?.toISOString().slice(0, 10),
+    email: profile.emailAddress,
+    provider: profile.emailProvider,
+    connectedAt: profile.emailConnectedAt?.toISOString().slice(0, 10),
+    message: "Email conectado a nivel de cuenta — aplica a todas tus casitas.",
   });
 }
 
@@ -1371,7 +1821,7 @@ async function askContractTool(ownerId: string, wsId: string | undefined, questi
   // If we have cached text, use it (fast + cheap)
   if (unit.contractText) {
     const completion = await openai.chat.completions.create({
-      model: "gpt-5.4-mini",
+      model: "gpt-4o",
       messages: [
         {
           role: "system",
@@ -1444,6 +1894,13 @@ export async function handleOwnerMessage(input: {
     const history = await loadChatHistory(phone, MAX_HISTORY);
     await saveChatMessage(phone, "user", userContent);
 
+    // Gate B: advisor for ambiguous action when owner has 2+ casitas and none is named
+    const gateB = await messageAdvisorGate(ownerId, userContent, wsSummary, history);
+    if (!gateB.proceed && gateB.stopMessage) {
+      await saveChatMessage(phone, "assistant", gateB.stopMessage);
+      return gateB.stopMessage;
+    }
+
     const systemPrompt = buildSystemPrompt(wsSummary);
     const messages: OpenAI.ChatCompletionMessageParam[] = [
       { role: "system", content: systemPrompt },
@@ -1452,7 +1909,7 @@ export async function handleOwnerMessage(input: {
     ];
 
     let response = await openai.chat.completions.create({
-      model: "gpt-5.4-mini", messages, tools, temperature: 0.3, max_completion_tokens: 2000,
+      model: "gpt-4o", messages, tools, temperature: 0.3, max_completion_tokens: 2000,
     });
     let choice = response.choices[0];
     let currentMessages = [...messages];
@@ -1463,11 +1920,11 @@ export async function handleOwnerMessage(input: {
       for (const tc of choice.message.tool_calls) {
         if (tc.type !== "function") continue;
         const args = JSON.parse(tc.function.arguments || "{}");
-        const result = await handleToolCall(tc.function.name, args, owner);
+        const result = await handleToolCall(tc.function.name, args, owner, { workspaces: wsSummary, ownerMessage: userContent });
         currentMessages.push({ role: "tool", tool_call_id: tc.id, content: result });
       }
       response = await openai.chat.completions.create({
-        model: "gpt-5.4-mini", messages: currentMessages, tools, temperature: 0.3, max_completion_tokens: 2000,
+        model: "gpt-4o", messages: currentMessages, tools, temperature: 0.3, max_completion_tokens: 2000,
       });
       choice = response.choices[0];
     }
@@ -1479,12 +1936,12 @@ export async function handleOwnerMessage(input: {
         for (const tc of choice.message.tool_calls) {
           if (tc.type !== "function") continue;
           const args = JSON.parse(tc.function.arguments || "{}");
-          const result = await handleToolCall(tc.function.name, args, owner);
+          const result = await handleToolCall(tc.function.name, args, owner, { workspaces: wsSummary, ownerMessage: userContent });
           currentMessages.push({ role: "tool", tool_call_id: tc.id, content: result });
         }
       }
       response = await openai.chat.completions.create({
-        model: "gpt-5.4-mini", messages: currentMessages, temperature: 0.3, max_completion_tokens: 2000,
+        model: "gpt-4o", messages: currentMessages, temperature: 0.3, max_completion_tokens: 2000,
       });
       choice = response.choices[0];
     }
@@ -1492,7 +1949,7 @@ export async function handleOwnerMessage(input: {
     // Last resort: if still no text content after all rounds, force a plain text response
     if (!choice.message.content) {
       response = await openai.chat.completions.create({
-        model: "gpt-5.4-mini",
+        model: "gpt-4o",
         messages: [
           ...currentMessages,
           { role: "user", content: "[Sistema: Respondé al último mensaje del propietario en texto plano, sin llamar tools.]" },

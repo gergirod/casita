@@ -101,7 +101,25 @@ async function processMessageAsync(
     if ("skipped" in result) {
       console.warn("[webhook] sendWhatsApp skipped:", result.reason);
     } else if ("error" in result) {
-      console.error("[webhook] sendWhatsApp error:", result.message);
+      const msg = result.message ?? "";
+
+      // Twilio sandbox 50 msg/day limit — can't send anything, save for visibility
+      if (msg.includes("exceeded") && msg.includes("daily messages limit")) {
+        console.warn("[webhook] ⚠️  TWILIO SANDBOX DAILY LIMIT REACHED — reply not delivered to", phone);
+        console.warn("[webhook] Undelivered reply:", reply.slice(0, 200));
+        // Save the failed reply to chat history so it shows up in dashboard
+        try {
+          const { saveChatMessage } = await import("@/lib/services/chat-history");
+          await saveChatMessage(phone, "assistant", `[NO ENVIADO — límite Twilio sandbox] ${reply}`);
+        } catch { /* non-critical */ }
+        return;
+      }
+
+      // Other Twilio errors — log and try a short fallback
+      console.error("[webhook] sendWhatsApp error:", msg);
+      try {
+        await sendWhatsApp({ to: phone, body: "Ups, tuve un problema técnico enviando tu respuesta. Intentá de nuevo en un momento 🙏" });
+      } catch { /* if fallback also fails, nothing we can do */ }
     } else {
       console.log("[webhook] Reply sent, sid:", result.sid);
     }

@@ -37,14 +37,21 @@ export type OutlookBillResult = {
 async function getAccessToken(workspaceId: string): Promise<string> {
   const ws = await prisma.workspace.findUnique({
     where: { id: workspaceId },
+    select: { ownerId: true },
+  });
+
+  if (!ws) throw new Error("Workspace not found");
+
+  const profile = await prisma.ownerProfile.findUnique({
+    where: { ownerId: ws.ownerId },
     select: { emailRefreshToken: true },
   });
 
-  if (!ws?.emailRefreshToken) {
+  if (!profile?.emailRefreshToken) {
     throw new Error("No Microsoft OAuth token found");
   }
 
-  return refreshMsAccessToken(ws.emailRefreshToken);
+  return refreshMsAccessToken(profile.emailRefreshToken);
 }
 
 async function graphFetch<T>(accessToken: string, path: string): Promise<T> {

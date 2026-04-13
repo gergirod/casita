@@ -229,6 +229,7 @@ async function _notifyOwnerOfProof(params: {
   propertyName: string;
   unitIdentifier: string;
 }) {
+  // ── Email notification ───────────────────────────────────────────
   try {
     const supabase = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -236,9 +237,34 @@ async function _notifyOwnerOfProof(params: {
     );
     const { data } = await supabase.auth.admin.getUserById(params.ownerId);
     const ownerEmail = data.user?.email;
-    if (!ownerEmail) return;
+    if (ownerEmail) {
+      await sendProofUploadedEmail({ ownerEmail, ...params });
+    }
+  } catch {
+    // non-blocking
+  }
 
-    await sendProofUploadedEmail({ ownerEmail, ...params });
+  // ── WhatsApp notification ────────────────────────────────────────
+  try {
+    const profile = await prisma.ownerProfile.findUnique({
+      where: { ownerId: params.ownerId },
+      select: { phone: true, whatsappEnabled: true },
+    });
+    if (!profile?.phone || !profile.whatsappEnabled) return;
+
+    const tenant = params.tenantName ?? "El inquilino";
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+    const dashboardLink = `${appUrl}/dashboard/${params.workspaceId}`;
+
+    const msg =
+      `📩 *${tenant}* subió un comprobante de pago.\n\n` +
+      `📋 *${params.title}* — ${params.amount}\n` +
+      `📅 Vencía el ${params.dueDate}\n` +
+      `🏠 ${params.propertyName}\n\n` +
+      `Respondé *"verificar [id]"* o verificalo desde el dashboard:\n${dashboardLink}`;
+
+    const { sendWhatsApp } = await import("@/lib/whatsapp");
+    await sendWhatsApp({ to: profile.phone, body: msg });
   } catch {
     // non-blocking
   }

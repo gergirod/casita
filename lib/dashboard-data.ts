@@ -9,12 +9,6 @@ function serializeWorkspace(workspace: {
   timezone: string;
   n8nWebhookUrl: string | null;
   n8nSecret:     string | null;
-  emailProvider:          string | null;
-  emailAddress:           string | null;
-  emailEncryptedPassword: string | null;
-  imapHost:               string | null;
-  imapPort:               number | null;
-  emailConnectedAt:       Date   | null;
   mpEnabled:              boolean;
   mpPublicKey:            string | null;
   mpUserId:               string | null;
@@ -92,7 +86,7 @@ function serializeWorkspace(workspace: {
     }>;
   }>;
 },
-// ownerPhone and whatsappEnabled are account-level (OwnerProfile), passed separately.
+// ownerPhone, whatsappEnabled, and email config are account-level (OwnerProfile), passed separately.
 ownerProfile?: { phone: string | null; whatsappEnabled: boolean } | null,
 ) {
   return {
@@ -102,9 +96,6 @@ ownerProfile?: { phone: string | null; whatsappEnabled: boolean } | null,
     locale: workspace.locale,
     currency: workspace.currency,
     timezone: workspace.timezone,
-    emailProvider: workspace.emailProvider,
-    emailAddress: workspace.emailAddress,
-    emailConnectedAt: workspace.emailConnectedAt?.toISOString() ?? null,
     mpEnabled: workspace.mpEnabled,
     mpPublicKey: workspace.mpPublicKey,
     mpUserId: workspace.mpUserId,

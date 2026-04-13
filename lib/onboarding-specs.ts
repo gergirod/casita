@@ -36,7 +36,7 @@ export const ONBOARDING_SPECS: Record<string, ActionSpec> = {
       { key: "payment_holder_name",  label: "Nombre del titular de la cuenta",            required: false, type: "string", dependsOn: { field: "payment_method", value: "cbu" } },
       { key: "tenant_name",          label: "Nombre del inquilino",                       required: false, type: "string" },
       { key: "tenant_whatsapp",      label: "WhatsApp del inquilino",                     required: false, type: "string", hint: "Incluir código de país ej: +549..." },
-      { key: "tenant_email",         label: "Email del inquilino",                        required: false, type: "string" },
+      { key: "tenant_email",         label: "Email del inquilino",                        required: false, type: "string", hint: "Necesario para recordatorios automáticos de pago" },
       { key: "rent_amount",          label: "Monto del alquiler",                         required: false, type: "number", hint: "Requerido si hay inquilino" },
       { key: "rent_currency",        label: "Moneda del alquiler",                        required: false, type: "enum", options: ["ARS", "USD"] },
       { key: "due_day",              label: "Día de vencimiento (1-31)",                  required: false, type: "integer", hint: "Requerido si hay monto de alquiler" },
@@ -72,7 +72,7 @@ export const ONBOARDING_SPECS: Record<string, ActionSpec> = {
     fields: [
       { key: "tenant_name",      label: "Nombre del inquilino",           required: true,  type: "string" },
       { key: "tenant_whatsapp",  label: "WhatsApp del inquilino",         required: true,  type: "string", hint: "Incluir código de país ej: +549..." },
-      { key: "tenant_email",     label: "Email del inquilino",            required: false, type: "string" },
+      { key: "tenant_email",     label: "Email del inquilino",            required: false, type: "string", hint: "Necesario para recordatorios automáticos de pago" },
       { key: "lease_end_date",   label: "Fecha de fin de contrato",       required: false, type: "string" },
     ],
   },

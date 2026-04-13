@@ -15,11 +15,13 @@ function getCredentials() {
 }
 
 function getRedirectUri() {
-  const base = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+  // OAUTH_REDIRECT_BASE overrides for OAuth only — allows using localhost in dev
+  // while NEXT_PUBLIC_APP_URL keeps pointing to ngrok for Twilio webhooks.
+  const base = process.env.OAUTH_REDIRECT_BASE ?? process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
   return `${base}/api/auth/microsoft-email/callback`;
 }
 
-export function buildMicrosoftAuthUrl(workspaceId: string): string {
+export function buildMicrosoftAuthUrl(ownerId: string): string {
   const { clientId } = getCredentials();
 
   const params = new URLSearchParams({
@@ -29,7 +31,7 @@ export function buildMicrosoftAuthUrl(workspaceId: string): string {
     scope: SCOPES.join(" "),
     response_mode: "query",
     prompt: "consent",
-    state: workspaceId,
+    state: ownerId,
   });
 
   return `${MS_AUTH_URL}?${params.toString()}`;

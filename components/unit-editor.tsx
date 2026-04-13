@@ -4,7 +4,6 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { ObligationTypePicker, TYPE_META, type ObligationTypeValue } from "@/components/obligation-type-picker";
 import { ProviderPicker } from "@/components/provider-picker";
-import { EmailConnect } from "@/components/email-connect";
 import type { ServiceType } from "@/lib/providers";
 
 type Template = {
@@ -42,8 +41,6 @@ type Props = {
   unitId: string;
   workspaceId: string;
   emailConnected: boolean;
-  googleOAuthEnabled: boolean;
-  microsoftOAuthEnabled: boolean;
   templates: Template[];
   obligations?: MonthlyObligation[];
   leaseEndDate?: string | null;
@@ -60,7 +57,7 @@ function addMonths(d: Date, n: number): Date {
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + n, 1));
 }
 
-export function UnitEditor({ unitId, workspaceId, emailConnected, googleOAuthEnabled, microsoftOAuthEnabled, templates, obligations = [], leaseEndDate, unitCreatedAt, tenantName }: Props) {
+export function UnitEditor({ unitId, workspaceId, emailConnected, templates, obligations = [], leaseEndDate, unitCreatedAt, tenantName }: Props) {
   const router = useRouter();
   const [, startTransition] = useTransition();
 
@@ -780,15 +777,7 @@ export function UnitEditor({ unitId, workspaceId, emailConnected, googleOAuthEna
                   <IngestionModePicker value={newIngestionMode} onChange={setNewIngestionMode} />
 
                   {newIngestionMode === "auto_email" && !emailConnected && (
-                    <EmailConnect
-                      workspaceId={workspaceId}
-                      connectedEmail={null}
-                      connectedAt={null}
-                      googleOAuthEnabled={googleOAuthEnabled}
-                      microsoftOAuthEnabled={microsoftOAuthEnabled}
-                      onConnected={refresh}
-                      onDisconnected={refresh}
-                    />
+                    <EmailConnectHint />
                   )}
 
                   {newIngestionMode === "auto_email" && emailConnected && (
@@ -1002,15 +991,7 @@ export function UnitEditor({ unitId, workspaceId, emailConnected, googleOAuthEna
                 <IngestionModePicker value={editIngestionMode} onChange={setEditIngestionMode} />
 
                 {editIngestionMode === "auto_email" && !emailConnected && (
-                  <EmailConnect
-                    workspaceId={workspaceId}
-                    connectedEmail={null}
-                    connectedAt={null}
-                    googleOAuthEnabled={googleOAuthEnabled}
-                    microsoftOAuthEnabled={microsoftOAuthEnabled}
-                    onConnected={refresh}
-                    onDisconnected={refresh}
-                  />
+                  <EmailConnectHint />
                 )}
 
                 {t.type !== "rent" && (
@@ -1872,5 +1853,27 @@ function ExtraChargeButton({ unitId, onSaved }: { unitId: string; onSaved: () =>
         </div>
       )}
     </>
+  );
+}
+
+/* Shown when auto_email is selected but no email is connected yet */
+function EmailConnectHint() {
+  return (
+    <div style={{
+      background: "#fffbeb",
+      border: "1.5px solid #fcd34d",
+      borderRadius: "10px",
+      padding: "0.75rem 1rem",
+      fontSize: "0.8rem",
+      color: "#92400e",
+      lineHeight: 1.5,
+    }}>
+      <strong>Email no conectado.</strong>{" "}
+      Para buscar facturas automáticamente necesitás conectar tu email en{" "}
+      <a href="/dashboard/settings" style={{ color: "#059669", fontWeight: 600, textDecoration: "underline" }}>
+        Ajustes de cuenta
+      </a>
+      {" "}— se configura una sola vez para todas tus casitas.
+    </div>
   );
 }

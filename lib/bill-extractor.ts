@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
 
 export type BillExtraction = {
   totalAmount: number | null;
@@ -64,19 +65,36 @@ export async function extractBillData(
       { type: "text", text: `Extraé los datos de esta factura:\n\n${text}` },
     ];
   } else {
-    // PDF: gpt-4o-mini no lee PDFs nativos, pasamos como base64 en texto
-    // Si es un PDF corto, lo intentamos como texto; si no, como imagen del contenido
-    const text = buffer.toString("utf-8").slice(0, 12000);
-    const hasReadableText = /[a-záéíóúñ]{3,}/i.test(text);
+    // PDF: use pdfjs-dist to extract the text layer (works in Node.js without DOM).
+    let extractedText = "";
+    try {
+      const uint8 = new Uint8Array(buffer);
+      const doc = await pdfjsLib.getDocument({ data: uint8, useWorkerFetch: false, isEvalSupported: false, useSystemFonts: true }).promise;
+      const pages: string[] = [];
+      for (let i = 1; i <= Math.min(doc.numPages, 8); i++) {
+        const page = await doc.getPage(i);
+        const content = await page.getTextContent();
+        pages.push(content.items.map((item) => ("str" in item ? item.str : "")).join(" "));
+      }
+      extractedText = pages.join("\n").trim();
+    } catch {
+      // pdfjs failed — fall back to UTF-8 slice (works for some simple text-based PDFs)
+      extractedText = buffer.toString("utf-8").replace(/[^\x20-\x7E\n\táéíóúñÁÉÍÓÚÑ$.,:%]/g, " ").trim();
+    }
 
-    if (hasReadableText) {
+    if (extractedText.length > 50) {
       content = [
-        { type: "text", text: `Extraé los datos de esta factura (contenido del PDF):\n\n${text}` },
+        { type: "text", text: `Extraé los datos de esta factura (texto del PDF):\n\n${extractedText.slice(0, 12000)}` },
       ];
     } else {
+      // Scanned/image-only PDF — pass first page as base64 image
       const base64 = buffer.toString("base64");
       content = [
-        { type: "text", text: `Extraé los datos de esta factura. El archivo es un PDF en base64:\n\n${base64.slice(0, 8000)}` },
+        {
+          type: "image_url",
+          image_url: { url: `data:image/jpeg;base64,${base64}`, detail: "high" },
+        },
+        { type: "text", text: "Extraé los datos de esta factura." },
       ];
     }
   }

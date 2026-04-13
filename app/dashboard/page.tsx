@@ -3,11 +3,10 @@ import { SignOutButton } from "@/components/sign-out-button";
 import { requireOwner } from "@/lib/auth";
 import { getOwnerDashboardOverview } from "@/lib/dashboard-data";
 import { CasitaLogo, CasitaLockup } from "@/components/casita-logo";
-import { WhatsAppConnectBanner } from "@/components/whatsapp-connect-banner";
+import { ConnectPanel } from "@/components/connect-panel";
+import { isGoogleOAuthConfigured } from "@/lib/google-oauth";
+import { isMicrosoftOAuthConfigured } from "@/lib/microsoft-oauth";
 import { prisma } from "@/lib/prisma";
-
-const CASITA_WA_NUMBER = process.env.TWILIO_WHATSAPP_FROM ?? "+14155238886";
-const SANDBOX_JOIN_CODE = process.env.TWILIO_SANDBOX_JOIN_CODE ?? undefined;
 
 export default async function DashboardPage() {
   const owner = await requireOwner();
@@ -22,7 +21,7 @@ export default async function DashboardPage() {
 
   const ownerProfile = await prisma.ownerProfile.findUnique({
     where: { ownerId: owner.id },
-    select: { phone: true },
+    select: { phone: true, emailProvider: true, emailAddress: true, emailConnectedAt: true },
   });
   const hasWhatsApp = !!ownerProfile?.phone;
 
@@ -73,18 +72,41 @@ export default async function DashboardPage() {
           >
             + Nueva casita
           </Link>
+          <Link
+            href="/dashboard/settings"
+            aria-label="Ajustes de cuenta"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              width: "36px",
+              height: "36px",
+              borderRadius: "10px",
+              background: "transparent",
+              border: "1.5px solid #e5e7eb",
+              color: "#6b7280",
+              textDecoration: "none",
+            }}
+          >
+            <GearIcon />
+          </Link>
           <SignOutButton />
         </div>
       </header>
 
       <div style={{ maxWidth: "640px", margin: "0 auto", padding: "2rem 1.25rem" }}>
-        {/* WhatsApp onboarding banner — shown until the owner connects their phone */}
-        {!hasWhatsApp && (
-          <WhatsAppConnectBanner
-            casitaWhatsAppNumber={CASITA_WA_NUMBER}
-            sandboxJoinCode={SANDBOX_JOIN_CODE}
-          />
-        )}
+        {/* Connection panel — shown when WhatsApp or Email are not yet connected */}
+        <ConnectPanel
+          ownerId={owner.id}
+          whatsapp={{ phone: ownerProfile?.phone ?? null }}
+          email={{
+            provider: ownerProfile?.emailProvider ?? null,
+            address: ownerProfile?.emailAddress ?? null,
+            connectedAt: ownerProfile?.emailConnectedAt?.toISOString() ?? null,
+          }}
+          googleOAuthEnabled={isGoogleOAuthConfigured()}
+          microsoftOAuthEnabled={isMicrosoftOAuthConfigured()}
+        />
 
         {/* Title + summary */}
         <div style={{ marginBottom: "1.75rem" }}>
@@ -332,5 +354,14 @@ function DatabaseErrorState() {
         </div>
       </div>
     </main>
+  );
+}
+
+function GearIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="3"/>
+      <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>
+    </svg>
   );
 }

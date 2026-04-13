@@ -3,30 +3,25 @@ import { exchangeMsCodeForTokens, encryptMsRefreshToken } from "@/lib/microsoft-
 import { prisma } from "@/lib/prisma";
 import { sendWhatsApp } from "@/lib/whatsapp";
 
+/**
+ * GET /api/auth/microsoft-email/callback?code=xxx&state=ownerId
+ *
+ * Microsoft redirects here after the owner authorizes.
+ * Email config is stored at account level (OwnerProfile), not per workspace.
+ */
 export async function GET(req: NextRequest) {
   const code = req.nextUrl.searchParams.get("code");
-  const workspaceId = req.nextUrl.searchParams.get("state");
+  const ownerId = req.nextUrl.searchParams.get("state");
   const error = req.nextUrl.searchParams.get("error");
 
   if (error) {
-    return new NextResponse(buildPage("error", "Cancelaste la autorización. Podés intentar de nuevo desde WhatsApp."), {
+    return new NextResponse(buildPage("error", "Cancelaste la autorización. Podés intentar de nuevo desde Ajustes."), {
       headers: { "Content-Type": "text/html" },
     });
   }
 
-  if (!code || !workspaceId) {
+  if (!code || !ownerId) {
     return new NextResponse(buildPage("error", "Faltan parámetros. Intentá de nuevo."), {
-      headers: { "Content-Type": "text/html" },
-    });
-  }
-
-  const ws = await prisma.workspace.findUnique({
-    where: { id: workspaceId },
-    select: { id: true, name: true, ownerId: true },
-  });
-
-  if (!ws) {
-    return new NextResponse(buildPage("error", "Workspace no encontrado."), {
       headers: { "Content-Type": "text/html" },
     });
   }
@@ -34,9 +29,16 @@ export async function GET(req: NextRequest) {
   try {
     const { refreshToken, email } = await exchangeMsCodeForTokens(code);
 
-    await prisma.workspace.update({
-      where: { id: workspaceId },
-      data: {
+    await prisma.ownerProfile.upsert({
+      where: { ownerId },
+      create: {
+        ownerId,
+        emailProvider: "outlook-oauth",
+        emailAddress: email,
+        emailRefreshToken: encryptMsRefreshToken(refreshToken),
+        emailConnectedAt: new Date(),
+      },
+      update: {
         emailProvider: "outlook-oauth",
         emailAddress: email,
         emailRefreshToken: encryptMsRefreshToken(refreshToken),
@@ -48,22 +50,21 @@ export async function GET(req: NextRequest) {
     });
 
     const ownerProfile = await prisma.ownerProfile.findUnique({
-      where: { ownerId: ws.ownerId },
+      where: { ownerId },
       select: { phone: true },
     });
-    const ownerPhone = ownerProfile?.phone ?? null;
-    if (ownerPhone) {
+    if (ownerProfile?.phone) {
       try {
         await sendWhatsApp({
-          to: ownerPhone,
-          body: `✅ *Outlook conectado*\n\nTu email *${email}* quedó vinculado a *${ws.name}*. Ahora puedo buscar facturas en tu correo.\n\nProbá: "Buscame la última factura de Edenor"`,
+          to: ownerProfile.phone,
+          body: `✅ *Outlook conectado*\n\nTu email *${email}* quedó vinculado a tu cuenta. Ahora puedo buscar facturas en tu correo.\n\nProbá: "Buscame la última factura de Edenor"`,
         });
       } catch {
         // Best-effort
       }
     }
 
-    return new NextResponse(buildPage("success", `Outlook ${email} conectado a ${ws.name}`), {
+    return new NextResponse(buildPage("success", `Outlook ${email} conectado`), {
       headers: { "Content-Type": "text/html" },
     });
   } catch (err) {
@@ -114,9 +115,9 @@ function buildPage(type: "success" | "error", message: string): string {
     <div class="emoji">${emoji}</div>
     <h1>${title}</h1>
     <p class="status">${message}</p>
-    <p>${isSuccess ? "Ya podés volver a WhatsApp y pedirme que busque facturas." : "Volvé a WhatsApp e intentá de nuevo."}</p>
-    <a href="https://wa.me/${process.env.NEXT_PUBLIC_TWILIO_WHATSAPP_FROM?.replace("+", "")}" class="back">
-      Volver a WhatsApp
+    <p>${isSuccess ? "Ya podés volver a WhatsApp y pedirme que busque facturas." : "Volvé a Ajustes e intentá de nuevo."}</p>
+    <a href="${process.env.OAUTH_REDIRECT_BASE ?? process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000"}/dashboard/settings" class="back">
+      Ir a Ajustes
     </a>
   </div>
 </body>

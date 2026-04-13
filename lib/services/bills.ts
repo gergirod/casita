@@ -58,6 +58,8 @@ export interface IngestBillInput {
   fileBuffer: Buffer;
   mimeType: string;
   channel: ActivityChannel;
+  /** Optional: link this obligation to an existing template. */
+  templateId?: string;
 }
 
 export interface IngestBillResult {
@@ -112,6 +114,7 @@ export async function ingestBill(
       currency: "ARS",
       status: "pending",
       originalBillUrl: billUrl,
+      ...(input.templateId ? { templateId: input.templateId } : {}),
     },
   });
 

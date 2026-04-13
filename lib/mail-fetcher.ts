@@ -64,7 +64,6 @@ type UnitForFetch = {
 
 type WorkspaceForFetch = {
   id: string;
-  emailAddress: string | null;
   properties: Array<{ name: string; units: UnitForFetch[] }>;
 };
 
@@ -260,22 +259,39 @@ export async function fetchBillsForWorkspace(workspaceId: string): Promise<{
     },
   });
 
+  if (!workspace) return { processed: 0, skipped: 0, errors: ["Workspace no encontrado"] };
+
+  /* Email config now lives in OwnerProfile, not Workspace */
+  const ownerProfile = await prisma.ownerProfile.findUnique({
+    where: { ownerId: workspace.ownerId },
+    select: {
+      emailProvider: true,
+      emailAddress: true,
+      emailEncryptedPassword: true,
+      emailRefreshToken: true,
+      imapHost: true,
+      imapPort: true,
+    },
+  });
+
   if (
-    !workspace?.emailAddress ||
-    !workspace?.emailEncryptedPassword ||
-    !workspace?.emailProvider
+    !ownerProfile?.emailAddress ||
+    (!ownerProfile?.emailEncryptedPassword && !ownerProfile?.emailRefreshToken) ||
+    !ownerProfile?.emailProvider
   ) {
     return { processed: 0, skipped: 0, errors: ["Email no conectado"] };
   }
 
-  const allTemplates = workspace.properties.flatMap((p) =>
-    p.units.flatMap((u) => u.obligationTemplates)
+  const allTemplates = workspace.properties.flatMap((p: (typeof workspace.properties)[number]) =>
+    p.units.flatMap((u: (typeof p.units)[number]) => u.obligationTemplates)
   );
   if (allTemplates.length === 0) return { processed: 0, skipped: 0, errors: [] };
 
-  const slugsInUse = [...new Set(allTemplates.map((t) => t.providerSlug).filter(Boolean))] as string[];
+  const slugsInUse = [...new Set(allTemplates.map((t: (typeof allTemplates)[number]) => t.providerSlug).filter(Boolean))] as string[];
   const providers  = PROVIDERS.filter((p) => slugsInUse.includes(p.slug));
   if (providers.length === 0) return { processed: 0, skipped: 0, errors: [] };
+
+  /* ownerProfile is guaranteed non-null here due to the check above */
 
   /* ── Filtrar templates que realmente necesitan fetch esta semana ── */
   const templatesToFetch: typeof allTemplates = [];
@@ -293,16 +309,16 @@ export async function fetchBillsForWorkspace(workspaceId: string): Promise<{
     return { processed: 0, skipped: allTemplates.length, errors: [] };
   }
 
-  const activeProviderSlugs = [...new Set(templatesToFetch.map((t) => t.providerSlug!))];
+  const activeProviderSlugs = [...new Set(templatesToFetch.map((t: (typeof allTemplates)[number]) => t.providerSlug!))];
   const activeProviders     = providers.filter((p) => activeProviderSlugs.includes(p.slug));
 
   /* ── Conectar IMAP ── */
   const conn: EmailConnection = {
-    emailProvider:          workspace.emailProvider,
-    emailAddress:           workspace.emailAddress,
-    emailEncryptedPassword: workspace.emailEncryptedPassword,
-    imapHost:               workspace.imapHost,
-    imapPort:               workspace.imapPort,
+    emailProvider:          ownerProfile.emailProvider!,
+    emailAddress:           ownerProfile.emailAddress!,
+    emailEncryptedPassword: ownerProfile.emailEncryptedPassword!,
+    imapHost:               ownerProfile.imapHost,
+    imapPort:               ownerProfile.imapPort,
   };
 
   const client = new ImapFlow(getImapConfig(conn));
@@ -634,7 +650,7 @@ async function processProviderEmail(
         amount, dueDate, dueMonth, status,
         currency:        template.currency,
         originalBillUrl: billUrl,
-        notes:           `Auto-importado desde ${workspace.emailAddress ?? "—"}`,
+        notes:           `Auto-importado desde email`,
         extractionSource: isExtractionConfigured() ? "gemini" : "email",
         ...(extracted?.totalAmount != null && { extractedAmount: extracted.totalAmount }),
         ...(extracted?.dueDate && { extractedDueDate: new Date(extracted.dueDate) }),

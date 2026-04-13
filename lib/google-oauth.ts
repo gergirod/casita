@@ -15,15 +15,17 @@ function getCredentials() {
 }
 
 function getRedirectUri() {
-  const base = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+  // OAUTH_REDIRECT_BASE overrides for OAuth only — allows using localhost in dev
+  // while NEXT_PUBLIC_APP_URL keeps pointing to ngrok for Twilio webhooks.
+  const base = process.env.OAUTH_REDIRECT_BASE ?? process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
   return `${base}/api/auth/google-email/callback`;
 }
 
 /**
  * Build the Google OAuth2 authorization URL.
- * `state` encodes the workspaceId so we know which workspace to connect.
+ * `state` encodes the ownerId so we know which account to connect.
  */
-export function buildGoogleAuthUrl(workspaceId: string): string {
+export function buildGoogleAuthUrl(ownerId: string): string {
   const { clientId } = getCredentials();
 
   const params = new URLSearchParams({
@@ -33,7 +35,7 @@ export function buildGoogleAuthUrl(workspaceId: string): string {
     scope: SCOPES.join(" "),
     access_type: "offline",
     prompt: "consent",
-    state: workspaceId,
+    state: ownerId,
   });
 
   return `${GOOGLE_AUTH_URL}?${params.toString()}`;
