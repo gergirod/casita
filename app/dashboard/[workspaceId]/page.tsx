@@ -279,7 +279,7 @@ export default async function WorkspacePage({
               title: o.title,
               amount: Number(o.amount).toLocaleString("es-AR"),
               currency: workspace.currency,
-              dueDate: o.dueDate instanceof Date ? o.dueDate.toISOString() : o.dueDate,
+              dueDate: new Date(o.dueDate as unknown as string).toISOString(),
               proofUrl: o.proofUrl,
               tenantName: o.tenantName,
               propertyName: o.propertyName,
