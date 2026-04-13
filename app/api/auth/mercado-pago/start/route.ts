@@ -22,6 +22,7 @@ export async function GET() {
   const authUrl = new URL("https://auth.mercadopago.com/authorization");
   authUrl.searchParams.set("client_id", appId);
   authUrl.searchParams.set("response_type", "code");
+  authUrl.searchParams.set("platform_id", "mp");
   authUrl.searchParams.set("redirect_uri", redirectUri);
   authUrl.searchParams.set("state", state);
 
