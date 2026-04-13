@@ -244,9 +244,9 @@ function MercadoPagoSection({
   initialUserId: string | null;
 }) {
   const [connected, setConnected] = useState(initialEnabled);
-  const [userId] = useState(initialUserId);
   const [disconnecting, setDisconnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const userId = initialUserId;
 
   async function disconnect() {
     setDisconnecting(true);
@@ -255,7 +255,6 @@ function MercadoPagoSection({
       const res = await fetch("/api/owner/mercado-pago/connect", { method: "DELETE" });
       if (!res.ok) throw new Error("Error al desconectar");
       setConnected(false);
-      setUserId(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error");
     } finally {
