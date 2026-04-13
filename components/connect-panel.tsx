@@ -311,29 +311,6 @@ function MercadoPagoCard({
   const [error, setError] = useState<string | null>(null);
   const [disconnecting, setDisconnecting] = useState(false);
 
-  async function connect() {
-    if (!token.trim()) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const res = await fetch(`/api/owner/mercado-pago/connect`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ accessToken: token.trim() }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error ?? "Error al conectar");
-      setDone(true);
-      setUserId(String(data.mpUserId));
-      setExpanded(false);
-      setToken("");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Error");
-    } finally {
-      setBusy(false);
-    }
-  }
-
   async function disconnect() {
     setDisconnecting(true);
     setError(null);
@@ -341,7 +318,6 @@ function MercadoPagoCard({
       const res = await fetch(`/api/owner/mercado-pago/connect`, { method: "DELETE" });
       if (!res.ok) throw new Error("Error al desconectar");
       setDone(false);
-      setUserId(null);
       setExpanded(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error");
