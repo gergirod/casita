@@ -17,12 +17,13 @@ type Props = {
  * Expands inline to connect — no extra page needed.
  * Mobile-first design with large touch targets.
  */
-export function ConnectPanel({ ownerId, whatsapp, email, googleOAuthEnabled, microsoftOAuthEnabled }: Props) {
+export function ConnectPanel({ ownerId, whatsapp, email, googleOAuthEnabled, microsoftOAuthEnabled, mercadoPago }: Props) {
   const hasPhone = !!whatsapp.phone;
   const hasEmail = !!email.address;
 
-  // At least one thing to configure? Show the panel
-  if (hasPhone && hasEmail) return null; // both connected — no need to show this (can add settings link later)
+  const hasMp = mercadoPago?.enabled;
+  const allConnected = hasPhone && hasEmail && hasMp;
+  if (allConnected) return null;
 
   return (
     <div style={{ marginBottom: "1.5rem" }}>
@@ -36,6 +37,13 @@ export function ConnectPanel({ ownerId, whatsapp, email, googleOAuthEnabled, mic
             ownerId={ownerId}
             googleOAuthEnabled={googleOAuthEnabled}
             microsoftOAuthEnabled={microsoftOAuthEnabled}
+          />
+        )}
+        {!hasMp && mercadoPago !== undefined && (
+          <MercadoPagoCard
+            workspaceId={mercadoPago?.workspaceId ?? ""}
+            initialEnabled={false}
+            initialUserId={null}
           />
         )}
       </div>
@@ -384,11 +392,11 @@ function MercadoPagoCard({
                 {disconnecting ? "Desconectando…" : "Desconectar"}
               </button>
             </>
-          ) : (
+          ) : workspaceId ? (
             <>
               <p style={{ margin: "0.75rem 0 0", fontSize: "0.82rem", color: "#6b7280", lineHeight: 1.55 }}>
                 Pegá tu <strong>Access Token</strong> de Mercado Pago para habilitar cobros y links de pago automáticos.
-                Lo encontrás en <a href="https://www.mercadopago.com.ar/developers/panel" target="_blank" rel="noreferrer" style={{ color: "#059669" }}>developers.mercadopago.com</a> → tu app → Credenciales de prueba o producción.
+                Lo encontrás en <a href="https://www.mercadopago.com.ar/developers/panel" target="_blank" rel="noreferrer" style={{ color: "#059669" }}>developers.mercadopago.com</a> → tu app → Credenciales.
               </p>
               <div style={{ display: "flex", gap: "0.5rem" }}>
                 <input
@@ -409,6 +417,10 @@ function MercadoPagoCard({
                 </button>
               </div>
             </>
+          ) : (
+            <p style={{ margin: "0.75rem 0 0", fontSize: "0.82rem", color: "#6b7280", lineHeight: 1.55 }}>
+              Creá tu primera casita para habilitar cobros con Mercado Pago y generar links de pago automáticos para cada alquiler.
+            </p>
           )}
           {error && <p style={{ margin: 0, fontSize: "0.78rem", color: "#dc2626" }}>{error}</p>}
         </div>

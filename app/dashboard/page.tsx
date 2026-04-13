@@ -25,6 +25,8 @@ export default async function DashboardPage() {
   });
   const hasWhatsApp = !!ownerProfile?.phone;
 
+  const firstWorkspace = workspaces[0] ?? null;
+
   const summary = workspaces.reduce(
     (acc, ws) => {
       acc.workspaces += 1;
@@ -106,6 +108,11 @@ export default async function DashboardPage() {
           }}
           googleOAuthEnabled={isGoogleOAuthConfigured()}
           microsoftOAuthEnabled={isMicrosoftOAuthConfigured()}
+          mercadoPago={firstWorkspace ? {
+            workspaceId: firstWorkspace.id,
+            enabled: false,
+            userId: null,
+          } : { workspaceId: "", enabled: false, userId: null }}
         />
 
         {/* Title + summary */}
