@@ -30,7 +30,8 @@ export async function GET(request: NextRequest) {
   }
 
   const appId = process.env.MP_APP_ID;
-  const clientSecret = process.env.MP_CLIENT_SECRET;
+  // In Mercado Pago OAuth, the client_secret is the app owner's access token
+  const clientSecret = process.env.MP_ACCESS_TOKEN;
   const redirectUri = `${redirectBase}/api/auth/mercado-pago/callback`;
 
   if (!appId || !clientSecret) {
