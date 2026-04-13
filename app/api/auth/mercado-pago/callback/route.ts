@@ -53,8 +53,9 @@ export async function GET(request: NextRequest) {
 
   if (!tokenRes.ok) {
     const body = await tokenRes.text();
-    console.error("[mp-oauth] token exchange failed", body);
-    return NextResponse.redirect(`${settingsUrl}?mp_error=token_exchange_failed`);
+    console.error("[mp-oauth] token exchange failed", tokenRes.status, body);
+    const errMsg = encodeURIComponent(body.slice(0, 200));
+    return NextResponse.redirect(`${settingsUrl}?mp_error=token_exchange_failed&detail=${errMsg}`);
   }
 
   const tokenData = (await tokenRes.json()) as {
