@@ -8,6 +8,7 @@ type Props = {
   email: { provider: string | null; address: string | null; connectedAt: string | null };
   googleOAuthEnabled: boolean;
   microsoftOAuthEnabled: boolean;
+  mercadoPago?: { workspaceId: string; enabled: boolean; userId: string | null } | null;
 };
 
 /**
@@ -44,7 +45,7 @@ export function ConnectPanel({ ownerId, whatsapp, email, googleOAuthEnabled, mic
 
 /* ── Full account settings (used on /dashboard/settings page) ─── */
 
-export function AccountSettingsPanel({ ownerId, whatsapp, email, googleOAuthEnabled, microsoftOAuthEnabled }: Props) {
+export function AccountSettingsPanel({ ownerId, whatsapp, email, googleOAuthEnabled, microsoftOAuthEnabled, mercadoPago }: Props) {
   return (
     <div style={{ display: "grid", gap: "1rem" }}>
       <WhatsAppCard initialPhone={whatsapp.phone} />
@@ -56,6 +57,13 @@ export function AccountSettingsPanel({ ownerId, whatsapp, email, googleOAuthEnab
         googleOAuthEnabled={googleOAuthEnabled}
         microsoftOAuthEnabled={microsoftOAuthEnabled}
       />
+      {mercadoPago && (
+        <MercadoPagoCard
+          workspaceId={mercadoPago.workspaceId}
+          initialEnabled={mercadoPago.enabled}
+          initialUserId={mercadoPago.userId}
+        />
+      )}
     </div>
   );
 }
@@ -284,6 +292,131 @@ function EmailCard({
   );
 }
 
+/* ── Mercado Pago Card ──────────────────────────────────────────── */
+
+function MercadoPagoCard({
+  workspaceId,
+  initialEnabled,
+  initialUserId,
+}: {
+  workspaceId: string;
+  initialEnabled: boolean;
+  initialUserId: string | null;
+}) {
+  const [expanded, setExpanded] = useState(!initialEnabled);
+  const [token, setToken] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(initialEnabled);
+  const [userId, setUserId] = useState(initialUserId);
+  const [error, setError] = useState<string | null>(null);
+  const [disconnecting, setDisconnecting] = useState(false);
+
+  async function connect() {
+    if (!token.trim()) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/workspaces/${workspaceId}/mercado-pago/connect`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accessToken: token.trim() }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error ?? "Error al conectar");
+      setDone(true);
+      setUserId(String(data.mpUserId));
+      setExpanded(false);
+      setToken("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function disconnect() {
+    setDisconnecting(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/workspaces/${workspaceId}/mercado-pago/connect`, { method: "DELETE" });
+      if (!res.ok) throw new Error("Error al desconectar");
+      setDone(false);
+      setUserId(null);
+      setExpanded(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Error");
+    } finally {
+      setDisconnecting(false);
+    }
+  }
+
+  return (
+    <div style={cardStyle}>
+      <button onClick={() => setExpanded(!expanded)} style={headerBtnStyle}>
+        <span style={iconCircle("#fff7ed")}>
+          <MercadoPagoIcon />
+        </span>
+        <div style={{ flex: 1, textAlign: "left" }}>
+          <p style={{ margin: 0, fontWeight: 700, fontSize: "0.95rem", color: "#1c1c1e" }}>Mercado Pago</p>
+          <p style={{ margin: 0, fontSize: "0.78rem", color: done ? "#059669" : "#6b7280", marginTop: "1px" }}>
+            {done ? `Conectado${userId ? ` · ID ${userId}` : ""}` : "Sin conectar · tocá para agregar"}
+          </p>
+        </div>
+        <StatusDot connected={done} />
+        <ChevronIcon rotated={expanded} />
+      </button>
+
+      {expanded && (
+        <div style={{ padding: "0 1rem 1rem", borderTop: "1px solid #f2f2f7", display: "grid", gap: "0.75rem" }}>
+          {done ? (
+            <>
+              <div style={{ marginTop: "0.75rem", background: "#f0fdf4", borderRadius: "10px", padding: "0.75rem 1rem", display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                <span style={{ fontSize: "1rem" }}>✅</span>
+                <p style={{ margin: 0, fontWeight: 600, fontSize: "0.82rem", color: "#065f46" }}>
+                  Cuenta conectada{userId ? ` (ID: ${userId})` : ""}
+                </p>
+              </div>
+              <button
+                onClick={disconnect}
+                disabled={disconnecting}
+                style={{ padding: "0.55rem 1rem", borderRadius: "8px", border: "1.5px solid #fca5a5", background: "transparent", color: "#dc2626", fontWeight: 600, fontSize: "0.8rem", cursor: disconnecting ? "not-allowed" : "pointer", width: "fit-content" }}
+              >
+                {disconnecting ? "Desconectando…" : "Desconectar"}
+              </button>
+            </>
+          ) : (
+            <>
+              <p style={{ margin: "0.75rem 0 0", fontSize: "0.82rem", color: "#6b7280", lineHeight: 1.55 }}>
+                Pegá tu <strong>Access Token</strong> de Mercado Pago para habilitar cobros y links de pago automáticos.
+                Lo encontrás en <a href="https://www.mercadopago.com.ar/developers/panel" target="_blank" rel="noreferrer" style={{ color: "#059669" }}>developers.mercadopago.com</a> → tu app → Credenciales de prueba o producción.
+              </p>
+              <div style={{ display: "flex", gap: "0.5rem" }}>
+                <input
+                  type="password"
+                  value={token}
+                  onChange={(e) => setToken(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") connect(); }}
+                  placeholder="APP_USR-..."
+                  style={inputStyle}
+                  autoFocus
+                />
+                <button
+                  onClick={connect}
+                  disabled={busy || !token.trim()}
+                  style={primaryBtnStyle(busy || !token.trim())}
+                >
+                  {busy ? "…" : "Conectar"}
+                </button>
+              </div>
+            </>
+          )}
+          {error && <p style={{ margin: 0, fontSize: "0.78rem", color: "#dc2626" }}>{error}</p>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ── Shared styles ──────────────────────────────────────────────── */
 
 const cardStyle: React.CSSProperties = {
@@ -425,6 +558,16 @@ function MicrosoftIcon() {
       <rect x="11" y="1" width="9" height="9" fill="#7fba00"/>
       <rect x="1" y="11" width="9" height="9" fill="#00a4ef"/>
       <rect x="11" y="11" width="9" height="9" fill="#ffb900"/>
+    </svg>
+  );
+}
+
+function MercadoPagoIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 48 48" fill="none">
+      <circle cx="24" cy="24" r="24" fill="#009EE3"/>
+      <path d="M10 24c0-7.732 6.268-14 14-14s14 6.268 14 14" stroke="white" strokeWidth="3.5" strokeLinecap="round"/>
+      <circle cx="24" cy="30" r="4" fill="white"/>
     </svg>
   );
 }

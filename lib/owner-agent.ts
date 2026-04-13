@@ -555,6 +555,25 @@ const tools: OpenAI.ChatCompletionTool[] = [
   {
     type: "function",
     function: {
+      name: "connect_mp_account",
+      description:
+        "Conecta la cuenta de Mercado Pago del owner a una casita guardando el Access Token. " +
+        "Usalo cuando el owner quiera habilitar cobros con Mercado Pago o pida conectar MP. " +
+        "Pedile el Access Token de su app de MP (lo encuentra en mercadopago.com.ar/developers → su app → Credenciales). " +
+        "El token se guarda encriptado y se valida contra la API de MP antes de guardarse.",
+      parameters: {
+        type: OBJ,
+        properties: {
+          workspace_id: { type: "string", description: "ID de la casita" },
+          access_token: { type: "string", description: "Access Token de Mercado Pago (empieza con APP_USR-)" },
+        },
+        required: ["workspace_id", "access_token"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "connect_email_oauth",
       description:
         "Genera un link para que el owner conecte su email (Gmail o Outlook/Hotmail) de forma segura con OAuth. " +
@@ -646,6 +665,7 @@ Cuando el owner diga "hola", "menu", "ayuda" o cualquier saludo general, respond
 • "factura" — subir una factura (mandá el PDF/foto)
 • "buscar facturas" — buscar en tu email conectado
 • "cambiar monto" o "cambiar vencimiento" — actualizar un cobro recurrente
+• "conectar mercado pago" — vincular tu cuenta de MP para cobros automáticos
 • "link de mercado pago" — configurar o cambiar el link de MP de una casita
 
 O escribime directamente qué necesitás 👋
@@ -930,6 +950,7 @@ async function handleToolCall(
     case "get_claims": return getClaimsTool(owner.ownerId, a.workspace_id as string, a.unit_id as string | undefined, a.status as string | undefined);
     case "update_claim": return updateClaimTool(owner.ownerId, a.claim_id as string, a.status as string);
     case "configure_mp_link": return configureMpLinkTool(owner.ownerId, a.workspace_id as string, a.mp_link as string);
+    case "connect_mp_account": return connectMpAccountTool(owner.ownerId, a.workspace_id as string, a.access_token as string);
     case "connect_email_oauth": return connectEmailOAuthTool(owner.ownerId, a.provider as string);
     case "check_email_status": return checkEmailStatusTool(owner.ownerId);
     case "ask_contract": return askContractTool(owner.ownerId, a.workspace_id as string | undefined, a.question as string);
@@ -1778,6 +1799,43 @@ async function configureMpLinkTool(ownerId: string, wsId: string, mpLink: string
     ok: true,
     message: `✅ Link de Mercado Pago guardado para *${ws.name}*. Ahora los recordatorios al inquilino incluirán este link automáticamente.`,
     mp_link: ws.mpPaymentLink,
+  });
+}
+
+async function connectMpAccountTool(ownerId: string, wsId: string, accessToken: string): Promise<string> {
+  const wId = await resolveWorkspaceId(ownerId, wsId);
+  if (!wId) return JSON.stringify({ error: "Necesito workspace_id." });
+
+  const token = accessToken.trim();
+  if (!token.startsWith("APP_USR-") && !token.startsWith("TEST-")) {
+    return JSON.stringify({ error: "El token no parece válido. Asegurate de copiar el Access Token completo (empieza con APP_USR- o TEST-)." });
+  }
+
+  // Validate against MP API before saving
+  const verifyRes = await fetch("https://api.mercadopago.com/users/me", {
+    headers: { Authorization: `Bearer ${token}` },
+  }).catch(() => null);
+
+  if (!verifyRes?.ok) {
+    return JSON.stringify({ error: "El token es inválido o expiró. Verificá que copiaste el Access Token correcto desde tu app de Mercado Pago." });
+  }
+
+  const mpUser = await verifyRes.json() as { id: number; email: string };
+
+  const { encrypt } = await import("@/lib/encrypt");
+  const ws = await prisma.workspace.update({
+    where: { id: wId },
+    data: {
+      mpEnabled: true,
+      mpAccessTokenEncrypted: encrypt(token),
+      mpUserId: String(mpUser.id),
+    },
+    select: { name: true },
+  });
+
+  return JSON.stringify({
+    ok: true,
+    message: `✅ Mercado Pago conectado para *${ws.name}*.\n\nCuenta: ${mpUser.email}\nAhora puedo generar links de pago dinámicos para cada cobro.`,
   });
 }
 

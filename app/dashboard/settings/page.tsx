@@ -20,6 +20,13 @@ export default async function SettingsPage() {
     },
   });
 
+  // MP is per-workspace — show the first workspace's MP status
+  const firstWorkspace = await prisma.workspace.findFirst({
+    where: { ownerId: owner.id },
+    select: { id: true, mpEnabled: true, mpUserId: true },
+    orderBy: { createdAt: "asc" },
+  });
+
   return (
     <main style={{ minHeight: "100vh", background: "#f2f2f7" }}>
       <header
@@ -80,6 +87,11 @@ export default async function SettingsPage() {
           }}
           googleOAuthEnabled={isGoogleOAuthConfigured()}
           microsoftOAuthEnabled={isMicrosoftOAuthConfigured()}
+          mercadoPago={firstWorkspace ? {
+            workspaceId: firstWorkspace.id,
+            enabled: firstWorkspace.mpEnabled,
+            userId: firstWorkspace.mpUserId,
+          } : null}
         />
       </div>
     </main>

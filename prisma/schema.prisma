@@ -41,6 +41,7 @@ model Workspace {
 model OwnerProfile {
   id              String   @id @default(cuid())
   ownerId         String   @unique
+  firstName       String?
   phone           String?
   whatsappEnabled Boolean  @default(false)
 
