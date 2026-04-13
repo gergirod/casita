@@ -13,6 +13,7 @@
  */
 
 import { prisma } from "@/lib/prisma";
+import { ObligationType } from "@prisma/client";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -147,7 +148,7 @@ const RULES: Rule[] = [
       const templates = await prisma.obligationTemplate.findMany({
         where: {
           unit: { property: { workspaceId: wId } },
-          type: { in: types as unknown as string[] },
+          type: { in: types as unknown as ObligationType[] },
           isActive: true,
         },
         select: { id: true, title: true, type: true, unit: { select: { identifier: true, property: { select: { name: true } } } } },
