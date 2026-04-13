@@ -18,12 +18,19 @@ export type PaymentLinkResult =
   | { ok: false; error: string };
 
 function getAccessToken(connection: MercadoPagoConnection): string | null {
-  if (!connection.enabled || !connection.accessTokenEncrypted) return null;
-  try {
-    return decrypt(connection.accessTokenEncrypted);
-  } catch {
-    return null;
+  // Per-workspace token takes priority
+  if (connection.accessTokenEncrypted) {
+    try {
+      return decrypt(connection.accessTokenEncrypted);
+    } catch {
+      // Fall through to global env var
+    }
   }
+  // Fallback to global env var (useful when workspace isn't yet individually connected)
+  if (process.env.MP_ACCESS_TOKEN) {
+    return process.env.MP_ACCESS_TOKEN;
+  }
+  return null;
 }
 
 export function buildExternalReference(obligationId: string): string {

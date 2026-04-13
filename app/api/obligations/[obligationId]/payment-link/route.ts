@@ -40,7 +40,8 @@ export async function POST(
   if (!obligation) return NextResponse.json({ error: "Obligación no encontrada" }, { status: 404 });
 
   const ws = obligation.unit.property.workspace;
-  if (!ws.mpEnabled || !ws.mpAccessTokenEncrypted) {
+  const hasGlobalToken = Boolean(process.env.MP_ACCESS_TOKEN);
+  if (!ws.mpEnabled && !ws.mpAccessTokenEncrypted && !hasGlobalToken) {
     return NextResponse.json({ error: "Mercado Pago no está habilitado en esta casita" }, { status: 422 });
   }
 
