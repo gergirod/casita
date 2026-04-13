@@ -1,5 +1,5 @@
 {
-  "name": "@casita/dale-plugin",
+  "name": "casita-dale-plugin",
   "version": "1.0.7",
   "description": "Dale connector plugin for Casita rental operations",
   "main": "src/index.ts",
