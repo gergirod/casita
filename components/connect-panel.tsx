@@ -306,10 +306,8 @@ function MercadoPagoCard({
   initialUserId: string | null;
 }) {
   const [expanded, setExpanded] = useState(!initialEnabled);
-  const [token, setToken] = useState("");
-  const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(initialEnabled);
-  const [userId, setUserId] = useState(initialUserId);
+  const [userId] = useState(initialUserId);
   const [error, setError] = useState<string | null>(null);
   const [disconnecting, setDisconnecting] = useState(false);
 
@@ -389,27 +387,20 @@ function MercadoPagoCard({
           ) : (
             <>
               <p style={{ margin: "0.75rem 0 0", fontSize: "0.82rem", color: "#6b7280", lineHeight: 1.55 }}>
-                Pegá tu <strong>Access Token</strong> de Mercado Pago para habilitar cobros y links de pago automáticos.
-                Lo encontrás en <a href="https://www.mercadopago.com.ar/developers/panel" target="_blank" rel="noreferrer" style={{ color: "#059669" }}>developers.mercadopago.com</a> → tu app → Credenciales.
+                Conectá tu cuenta de Mercado Pago para habilitar cobros y links de pago automáticos en todas tus casitas.
               </p>
-              <div style={{ display: "flex", gap: "0.5rem" }}>
-                <input
-                  type="password"
-                  value={token}
-                  onChange={(e) => setToken(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter") connect(); }}
-                  placeholder="APP_USR-..."
-                  style={inputStyle}
-                  autoFocus
-                />
-                <button
-                  onClick={connect}
-                  disabled={busy || !token.trim()}
-                  style={primaryBtnStyle(busy || !token.trim())}
-                >
-                  {busy ? "…" : "Conectar"}
-                </button>
-              </div>
+              <a
+                href="/api/auth/mercado-pago/start"
+                style={{
+                  display: "inline-flex", alignItems: "center", gap: "0.5rem",
+                  padding: "0.7rem 1.1rem", borderRadius: "10px",
+                  background: "#009EE3", color: "white", fontWeight: 700,
+                  fontSize: "0.85rem", textDecoration: "none", width: "fit-content",
+                  marginTop: "0.25rem",
+                }}
+              >
+                <MercadoPagoIcon /> Conectar Mercado Pago
+              </a>
             </>
           )}
           {error && <p style={{ margin: 0, fontSize: "0.78rem", color: "#dc2626" }}>{error}</p>}

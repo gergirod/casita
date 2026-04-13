@@ -244,33 +244,9 @@ function MercadoPagoSection({
   initialUserId: string | null;
 }) {
   const [connected, setConnected] = useState(initialEnabled);
-  const [userId, setUserId] = useState(initialUserId);
-  const [token, setToken] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [userId] = useState(initialUserId);
   const [disconnecting, setDisconnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  async function connect() {
-    if (!token.trim()) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const res = await fetch("/api/owner/mercado-pago/connect", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ accessToken: token.trim() }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error ?? "Error al conectar");
-      setConnected(true);
-      setUserId(String(data.mpUserId));
-      setToken("");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Error");
-    } finally {
-      setBusy(false);
-    }
-  }
 
   async function disconnect() {
     setDisconnecting(true);
@@ -324,33 +300,12 @@ function MercadoPagoSection({
           </button>
         </div>
       ) : (
-        <>
-          <p style={{ margin: "0 0 0.75rem", fontSize: "0.82rem", color: "#6b7280", lineHeight: 1.5 }}>
-            Pegá tu <strong>Access Token</strong> de Mercado Pago.
-            Lo encontrás en{" "}
-            <a href="https://www.mercadopago.com.ar/developers/panel" target="_blank" rel="noreferrer" style={{ color: "#059669" }}>
-              developers.mercadopago.com
-            </a>{" "}
-            → tu app → Credenciales.
-          </p>
-          <div style={{ display: "flex", gap: "0.5rem" }}>
-            <input
-              type="password"
-              value={token}
-              onChange={(e) => setToken(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") connect(); }}
-              placeholder="APP_USR-..."
-              style={inputStyle}
-            />
-            <button
-              onClick={connect}
-              disabled={busy || !token.trim()}
-              style={btnStyle(busy || !token.trim())}
-            >
-              {busy ? "…" : "Conectar"}
-            </button>
-          </div>
-        </>
+        <a
+          href="/api/auth/mercado-pago/start"
+          style={oauthBtnStyle("#009EE3")}
+        >
+          <MercadoPagoIcon /> Conectar Mercado Pago
+        </a>
       )}
 
       {error && <p style={{ margin: "0.5rem 0 0", fontSize: "0.78rem", color: "#dc2626" }}>{error}</p>}
