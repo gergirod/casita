@@ -7,7 +7,9 @@ export type WorkspaceSummary = {
 export type AdvisorIntent =
   | "delete_casita"
   | "end_rental"
-  | "ambiguous_multi_workspace";
+  | "ambiguous_multi_workspace"
+  | "tenant_save_claim"
+  | "tenant_save_proof";
 
 export type AdvisorInput = {
   intent: AdvisorIntent;

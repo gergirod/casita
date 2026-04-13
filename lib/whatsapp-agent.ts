@@ -4,6 +4,7 @@ import { getContractText, askContractDirect } from "@/lib/contract-reader";
 import { markProofReceived } from "@/lib/services/obligations";
 import { createClaim } from "@/lib/services/claims";
 import { loadChatHistory, saveChatMessage } from "@/lib/services/chat-history";
+import { tenantClaimGate, tenantProofGate } from "@/lib/advisor/advisor-gate";
 
 const MAX_HISTORY = 10;
 const MAX_TOOL_ROUNDS = 2;
@@ -222,10 +223,18 @@ async function handleToolCall(
       return getObligations(tenant.unitId);
     case "get_payment_info":
       return getPaymentInfo(tenant.unitId);
-    case "save_proof":
-      return saveProof(tenant, args.obligation_id as string, args.media_url as string);
-    case "save_claim":
-      return saveClaim(tenant, args.description as string);
+    case "save_proof": {
+      const proofUrl = args.media_url as string;
+      const proofGate = await tenantProofGate(proofUrl);
+      if (!proofGate.proceed) return JSON.stringify({ error: proofGate.stopMessage });
+      return saveProof(tenant, args.obligation_id as string, proofUrl);
+    }
+    case "save_claim": {
+      const description = args.description as string;
+      const claimGate = await tenantClaimGate(tenant.unitId, description);
+      if (!claimGate.proceed) return JSON.stringify({ error: claimGate.stopMessage });
+      return saveClaim(tenant, description);
+    }
     case "get_contract_info":
       return getContractInfo(tenant);
     case "ask_contract":

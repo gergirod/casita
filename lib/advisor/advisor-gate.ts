@@ -199,6 +199,88 @@ export async function toolAdvisorGate(
   return { proceed: true };
 }
 
+// ─── Gate C: tenant save_claim (spam / duplicate check) ─────────
+// Validates that a claim is meaningful and not a duplicate before saving.
+// Logs to console only — no workspaceId at call time.
+
+export async function tenantClaimGate(
+  unitId: string,
+  description: string
+): Promise<{ proceed: boolean; stopMessage?: string }> {
+  if (!isAdvisorEnabled()) return { proceed: true };
+  if (!description || description.trim().length < 5) {
+    return { proceed: false, stopMessage: "Por favor describí mejor el problema para que podamos registrarlo correctamente." };
+  }
+
+  // Check for open duplicate claim from this unit
+  const recentClaim = await prisma.claim.findFirst({
+    where: {
+      unitId,
+      status: { in: ["open", "in_progress"] },
+      createdAt: { gte: new Date(Date.now() - 1000 * 60 * 60 * 24) }, // last 24h
+    },
+    select: { description: true },
+  }).catch(() => null);
+
+  const input: AdvisorInput = {
+    intent: "tenant_save_claim",
+    ownerMessage: description,
+    workspaces: [],
+    operationalContext: {
+      recentOpenClaim: recentClaim?.description ?? null,
+    } as AdvisorInput["operationalContext"],
+  };
+
+  const output = await callAdvisor(input);
+
+  if (output.stop) {
+    console.log(JSON.stringify({
+      level: "warn",
+      event: "advisor.stopped",
+      intent: "tenant_save_claim",
+      unitId,
+      stopReason: output.stopReason,
+    }));
+    return {
+      proceed: false,
+      stopMessage: output.stopReason?.trim()
+        ? `⚠️ ${output.stopReason}`
+        : "⚠️ Tu reclamo parece similar a uno que ya registraste. ¿Querés agregar más detalles o es un problema nuevo?",
+    };
+  }
+
+  console.log(JSON.stringify({ level: "info", event: "advisor.consulted", intent: "tenant_save_claim", unitId, stop: false }));
+  return { proceed: true };
+}
+
+// ─── Gate D: tenant save_proof (URL validation) ──────────────────
+// Lightweight check — no GPT needed, just validates the URL looks like a real proof.
+
+const PROOF_URL_REGEX = /\.(jpg|jpeg|png|gif|webp|pdf|heic)(\?.*)?$/i;
+const MEDIA_DOMAIN_REGEX = /twilio|cloudinary|s3\.amazonaws|storage\.googleapis|imgur|drive\.google|dropbox/i;
+
+export async function tenantProofGate(
+  proofUrl: string
+): Promise<{ proceed: boolean; stopMessage?: string }> {
+  if (!isAdvisorEnabled()) return { proceed: true };
+
+  const isValidUrl = (() => {
+    try { new URL(proofUrl); return true; } catch { return false; }
+  })();
+
+  if (!isValidUrl) {
+    return { proceed: false, stopMessage: "No pude procesar el comprobante. Mandame la imagen o PDF directamente por WhatsApp." };
+  }
+
+  const looksLikeProof = PROOF_URL_REGEX.test(proofUrl) || MEDIA_DOMAIN_REGEX.test(proofUrl);
+  if (!looksLikeProof) {
+    console.log(JSON.stringify({ level: "warn", event: "advisor.stopped", intent: "tenant_save_proof", reason: "url_suspicious", proofUrl }));
+    return { proceed: false, stopMessage: "No reconocí ese archivo como un comprobante válido. Mandame una foto o PDF del comprobante de pago." };
+  }
+
+  return { proceed: true };
+}
+
 // ─── Gate B: message-level (ambiguous multi-workspace) ───────────
 // Gate B never writes to ActivityLog — no workspaceId available at this stage.
 
