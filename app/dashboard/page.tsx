@@ -21,7 +21,7 @@ export default async function DashboardPage() {
 
   const ownerProfile = await prisma.ownerProfile.findUnique({
     where: { ownerId: owner.id },
-    select: { phone: true, emailProvider: true, emailAddress: true, emailConnectedAt: true },
+    select: { phone: true, emailProvider: true, emailAddress: true, emailConnectedAt: true, mpAccessTokenEncrypted: true, mpUserId: true },
   });
   const hasWhatsApp = !!ownerProfile?.phone;
 
@@ -108,11 +108,10 @@ export default async function DashboardPage() {
           }}
           googleOAuthEnabled={isGoogleOAuthConfigured()}
           microsoftOAuthEnabled={isMicrosoftOAuthConfigured()}
-          mercadoPago={firstWorkspace ? {
-            workspaceId: firstWorkspace.id,
-            enabled: false,
-            userId: null,
-          } : { workspaceId: "", enabled: false, userId: null }}
+          mercadoPago={{
+            enabled: !!ownerProfile?.mpAccessTokenEncrypted,
+            userId: ownerProfile?.mpUserId ?? null,
+          }}
         />
 
         {/* Title + summary */}

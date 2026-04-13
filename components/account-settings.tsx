@@ -15,9 +15,10 @@ type Props = {
   };
   googleOAuthEnabled: boolean;
   microsoftOAuthEnabled: boolean;
+  mercadoPago?: { enabled: boolean; userId: string | null } | null;
 };
 
-export function AccountSettings({ ownerId, whatsapp, email, googleOAuthEnabled, microsoftOAuthEnabled }: Props) {
+export function AccountSettings({ ownerId, whatsapp, email, googleOAuthEnabled, microsoftOAuthEnabled, mercadoPago }: Props) {
   return (
     <div style={{ display: "grid", gap: "1.25rem" }}>
       <WhatsAppSection initialPhone={whatsapp.phone} />
@@ -28,6 +29,10 @@ export function AccountSettings({ ownerId, whatsapp, email, googleOAuthEnabled, 
         initialConnectedAt={email.connectedAt}
         googleOAuthEnabled={googleOAuthEnabled}
         microsoftOAuthEnabled={microsoftOAuthEnabled}
+      />
+      <MercadoPagoSection
+        initialEnabled={mercadoPago?.enabled ?? false}
+        initialUserId={mercadoPago?.userId ?? null}
       />
     </div>
   );
@@ -229,6 +234,130 @@ function EmailSection({
   );
 }
 
+/* ── Mercado Pago section ──────────────────────────────────────── */
+
+function MercadoPagoSection({
+  initialEnabled,
+  initialUserId,
+}: {
+  initialEnabled: boolean;
+  initialUserId: string | null;
+}) {
+  const [connected, setConnected] = useState(initialEnabled);
+  const [userId, setUserId] = useState(initialUserId);
+  const [token, setToken] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [disconnecting, setDisconnecting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function connect() {
+    if (!token.trim()) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/owner/mercado-pago/connect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accessToken: token.trim() }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error ?? "Error al conectar");
+      setConnected(true);
+      setUserId(String(data.mpUserId));
+      setToken("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function disconnect() {
+    setDisconnecting(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/owner/mercado-pago/connect", { method: "DELETE" });
+      if (!res.ok) throw new Error("Error al desconectar");
+      setConnected(false);
+      setUserId(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Error");
+    } finally {
+      setDisconnecting(false);
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader
+        icon={<MercadoPagoIcon />}
+        title="Mercado Pago"
+        badge={connected ? { label: "Conectado", color: "#059669" } : { label: "Sin conectar", color: "#6b7280" }}
+      />
+
+      <p style={{ margin: "0 0 1rem", fontSize: "0.85rem", color: "#6b7280", lineHeight: 1.5 }}>
+        Conectá tu cuenta de Mercado Pago para habilitar cobros y links de pago automáticos en todas tus casitas.
+      </p>
+
+      {connected ? (
+        <div style={{ display: "grid", gap: "0.75rem" }}>
+          <div style={{
+            display: "flex", alignItems: "center", gap: "0.75rem",
+            background: "#f0fdf4", borderRadius: "10px", padding: "0.75rem 1rem",
+          }}>
+            <span style={{ fontSize: "1.1rem" }}>✅</span>
+            <p style={{ margin: 0, fontWeight: 600, fontSize: "0.85rem", color: "#065f46" }}>
+              Cuenta conectada{userId ? ` · ID ${userId}` : ""}
+            </p>
+          </div>
+          <button
+            onClick={disconnect}
+            disabled={disconnecting}
+            style={{
+              padding: "0.55rem 1rem", borderRadius: "8px",
+              border: "1.5px solid #fca5a5", background: "transparent",
+              color: "#dc2626", fontWeight: 600, fontSize: "0.82rem",
+              cursor: disconnecting ? "not-allowed" : "pointer", width: "fit-content",
+            }}
+          >
+            {disconnecting ? "Desconectando…" : "Desconectar"}
+          </button>
+        </div>
+      ) : (
+        <>
+          <p style={{ margin: "0 0 0.75rem", fontSize: "0.82rem", color: "#6b7280", lineHeight: 1.5 }}>
+            Pegá tu <strong>Access Token</strong> de Mercado Pago.
+            Lo encontrás en{" "}
+            <a href="https://www.mercadopago.com.ar/developers/panel" target="_blank" rel="noreferrer" style={{ color: "#059669" }}>
+              developers.mercadopago.com
+            </a>{" "}
+            → tu app → Credenciales.
+          </p>
+          <div style={{ display: "flex", gap: "0.5rem" }}>
+            <input
+              type="password"
+              value={token}
+              onChange={(e) => setToken(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") connect(); }}
+              placeholder="APP_USR-..."
+              style={inputStyle}
+            />
+            <button
+              onClick={connect}
+              disabled={busy || !token.trim()}
+              style={btnStyle(busy || !token.trim())}
+            >
+              {busy ? "…" : "Conectar"}
+            </button>
+          </div>
+        </>
+      )}
+
+      {error && <p style={{ margin: "0.5rem 0 0", fontSize: "0.78rem", color: "#dc2626" }}>{error}</p>}
+    </Card>
+  );
+}
+
 /* ── Shared sub-components ─────────────────────────────────────── */
 
 function Card({ children }: { children: React.ReactNode }) {
@@ -356,6 +485,16 @@ function MicrosoftIcon() {
       <rect x="11" y="1" width="9" height="9" fill="#7fba00"/>
       <rect x="1" y="11" width="9" height="9" fill="#00a4ef"/>
       <rect x="11" y="11" width="9" height="9" fill="#ffb900"/>
+    </svg>
+  );
+}
+
+function MercadoPagoIcon() {
+  return (
+    <svg width={20} height={20} viewBox="0 0 48 48" fill="none" style={{ flexShrink: 0 }}>
+      <circle cx="24" cy="24" r="24" fill="#009EE3"/>
+      <path d="M10 24c0-7.732 6.268-14 14-14s14 6.268 14 14" stroke="white" strokeWidth="3.5" strokeLinecap="round"/>
+      <circle cx="24" cy="30" r="4" fill="white"/>
     </svg>
   );
 }

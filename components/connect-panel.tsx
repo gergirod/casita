@@ -8,7 +8,7 @@ type Props = {
   email: { provider: string | null; address: string | null; connectedAt: string | null };
   googleOAuthEnabled: boolean;
   microsoftOAuthEnabled: boolean;
-  mercadoPago?: { workspaceId: string; enabled: boolean; userId: string | null } | null;
+  mercadoPago?: { enabled: boolean; userId: string | null } | null;
 };
 
 /**
@@ -41,7 +41,6 @@ export function ConnectPanel({ ownerId, whatsapp, email, googleOAuthEnabled, mic
         )}
         {!hasMp && mercadoPago !== undefined && (
           <MercadoPagoCard
-            workspaceId={mercadoPago?.workspaceId ?? ""}
             initialEnabled={false}
             initialUserId={null}
           />
@@ -65,13 +64,10 @@ export function AccountSettingsPanel({ ownerId, whatsapp, email, googleOAuthEnab
         googleOAuthEnabled={googleOAuthEnabled}
         microsoftOAuthEnabled={microsoftOAuthEnabled}
       />
-      {mercadoPago && (
-        <MercadoPagoCard
-          workspaceId={mercadoPago.workspaceId}
-          initialEnabled={mercadoPago.enabled}
-          initialUserId={mercadoPago.userId}
-        />
-      )}
+      <MercadoPagoCard
+        initialEnabled={mercadoPago?.enabled ?? false}
+        initialUserId={mercadoPago?.userId ?? null}
+      />
     </div>
   );
 }
@@ -303,11 +299,9 @@ function EmailCard({
 /* ── Mercado Pago Card ──────────────────────────────────────────── */
 
 function MercadoPagoCard({
-  workspaceId,
   initialEnabled,
   initialUserId,
 }: {
-  workspaceId: string;
   initialEnabled: boolean;
   initialUserId: string | null;
 }) {
@@ -324,7 +318,7 @@ function MercadoPagoCard({
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch(`/api/workspaces/${workspaceId}/mercado-pago/connect`, {
+      const res = await fetch(`/api/owner/mercado-pago/connect`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ accessToken: token.trim() }),
@@ -346,7 +340,7 @@ function MercadoPagoCard({
     setDisconnecting(true);
     setError(null);
     try {
-      const res = await fetch(`/api/workspaces/${workspaceId}/mercado-pago/connect`, { method: "DELETE" });
+      const res = await fetch(`/api/owner/mercado-pago/connect`, { method: "DELETE" });
       if (!res.ok) throw new Error("Error al desconectar");
       setDone(false);
       setUserId(null);
@@ -392,7 +386,7 @@ function MercadoPagoCard({
                 {disconnecting ? "Desconectando…" : "Desconectar"}
               </button>
             </>
-          ) : workspaceId ? (
+          ) : (
             <>
               <p style={{ margin: "0.75rem 0 0", fontSize: "0.82rem", color: "#6b7280", lineHeight: 1.55 }}>
                 Pegá tu <strong>Access Token</strong> de Mercado Pago para habilitar cobros y links de pago automáticos.
@@ -417,10 +411,6 @@ function MercadoPagoCard({
                 </button>
               </div>
             </>
-          ) : (
-            <p style={{ margin: "0.75rem 0 0", fontSize: "0.82rem", color: "#6b7280", lineHeight: 1.55 }}>
-              Creá tu primera casita para habilitar cobros con Mercado Pago y generar links de pago automáticos para cada alquiler.
-            </p>
           )}
           {error && <p style={{ margin: 0, fontSize: "0.78rem", color: "#dc2626" }}>{error}</p>}
         </div>

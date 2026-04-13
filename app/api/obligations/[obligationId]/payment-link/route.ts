@@ -24,11 +24,7 @@ export async function POST(
           property: {
             include: {
               workspace: {
-                select: {
-                  id: true,
-                  mpEnabled: true,
-                  mpAccessTokenEncrypted: true,
-                },
+                select: { id: true },
               },
             },
           },
@@ -39,17 +35,22 @@ export async function POST(
 
   if (!obligation) return NextResponse.json({ error: "Obligación no encontrada" }, { status: 404 });
 
-  const ws = obligation.unit.property.workspace;
+  // Check owner-level MP token first, then fall back to global env var
+  const ownerProfile = await prisma.ownerProfile.findUnique({
+    where: { ownerId: auth.user.id },
+    select: { mpAccessTokenEncrypted: true },
+  });
+  const hasOwnerToken = !!ownerProfile?.mpAccessTokenEncrypted;
   const hasGlobalToken = Boolean(process.env.MP_ACCESS_TOKEN);
-  if (!ws.mpEnabled && !ws.mpAccessTokenEncrypted && !hasGlobalToken) {
-    return NextResponse.json({ error: "Mercado Pago no está habilitado en esta casita" }, { status: 422 });
+  if (!hasOwnerToken && !hasGlobalToken) {
+    return NextResponse.json({ error: "Mercado Pago no está configurado. Conectá tu cuenta en Ajustes." }, { status: 422 });
   }
 
   const externalReference = buildExternalReference(obligation.id);
   const link = await createMercadoPagoPaymentLink(
     {
-      enabled: ws.mpEnabled,
-      accessTokenEncrypted: ws.mpAccessTokenEncrypted,
+      enabled: true,
+      accessTokenEncrypted: ownerProfile?.mpAccessTokenEncrypted ?? null,
     },
     {
       obligationId: obligation.id,

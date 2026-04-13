@@ -54,6 +54,11 @@ model OwnerProfile {
   imapPort               Int?
   emailConnectedAt       DateTime?
 
+  /* Mercado Pago connection — account-level, applies to all casitas */
+  mpAccessTokenEncrypted String?
+  mpUserId               String?
+  mpConnectedAt          DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
