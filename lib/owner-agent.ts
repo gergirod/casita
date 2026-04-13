@@ -538,6 +538,23 @@ const tools: OpenAI.ChatCompletionTool[] = [
   {
     type: "function",
     function: {
+      name: "configure_mp_link",
+      description:
+        "Guarda o actualiza el link de pago de Mercado Pago de una casita. " +
+        "Usalo cuando el owner quiera configurar o cambiar su link de MP para que se incluya automáticamente en los recordatorios al inquilino.",
+      parameters: {
+        type: OBJ,
+        properties: {
+          workspace_id: { type: "string", description: "ID de la casita" },
+          mp_link: { type: "string", description: "Link de pago de Mercado Pago (ej: https://mpago.la/xxx o https://link.mercadopago.com.ar/xxx)" },
+        },
+        required: ["workspace_id", "mp_link"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "connect_email_oauth",
       description:
         "Genera un link para que el owner conecte su email (Gmail o Outlook/Hotmail) de forma segura con OAuth. " +
@@ -629,6 +646,7 @@ Cuando el owner diga "hola", "menu", "ayuda" o cualquier saludo general, respond
 • "factura" — subir una factura (mandá el PDF/foto)
 • "buscar facturas" — buscar en tu email conectado
 • "cambiar monto" o "cambiar vencimiento" — actualizar un cobro recurrente
+• "link de mercado pago" — configurar o cambiar el link de MP de una casita
 
 O escribime directamente qué necesitás 👋
 
@@ -667,7 +685,7 @@ Ejemplo crear casita:
 1. "🏠 ¡Dale! ¿Cómo se llama la casita?" → esperar respuesta
 2. "¿Cómo cobrás el alquiler? Transferencia bancaria (CBU/alias) o Mercado Pago." → esperar
 3. Si transferencia: "¿Cuál es el CBU o alias?" → esperar, luego "¿A nombre de quién?" → esperar
-4. Si Mercado Pago: "¿Cuál es el alias de MP?" → esperar
+4. Si Mercado Pago: "¿Tenés un link de pago de Mercado Pago? (ej: https://mpago.la/xxx o https://link.mercadopago.com.ar/xxx). Si no lo tenés a mano lo podés agregar después." → esperar
 5. "¿Ya tiene inquilino? Decime el nombre o 'no'." → esperar
 6. Si tiene inquilino: "¿WhatsApp del inquilino?" → esperar
 7. "¿Cuánto es el alquiler? (o 'no' si todavía no está definido)" → esperar
@@ -911,6 +929,7 @@ async function handleToolCall(
     case "save_custom_sender": return saveCustomSenderTool(a.template_id as string, a.sender_pattern as string);
     case "get_claims": return getClaimsTool(owner.ownerId, a.workspace_id as string, a.unit_id as string | undefined, a.status as string | undefined);
     case "update_claim": return updateClaimTool(owner.ownerId, a.claim_id as string, a.status as string);
+    case "configure_mp_link": return configureMpLinkTool(owner.ownerId, a.workspace_id as string, a.mp_link as string);
     case "connect_email_oauth": return connectEmailOAuthTool(owner.ownerId, a.provider as string);
     case "check_email_status": return checkEmailStatusTool(owner.ownerId);
     case "ask_contract": return askContractTool(owner.ownerId, a.workspace_id as string | undefined, a.question as string);
@@ -1736,6 +1755,30 @@ async function updateClaimTool(ownerId: string, claimId: string, newStatus: stri
   if (!result.ok) return JSON.stringify({ error: result.error });
   const statusLabel = result.data.status === "resolved" ? "✅ Resuelto" : "🔧 En progreso";
   return JSON.stringify({ ok: true, claimId: result.data.claimId, status: statusLabel });
+}
+
+// ─── Mercado Pago ────────────────────────────────────────────────
+
+async function configureMpLinkTool(ownerId: string, wsId: string, mpLink: string): Promise<string> {
+  const wId = await resolveWorkspaceId(ownerId, wsId);
+  if (!wId) return JSON.stringify({ error: "Necesito workspace_id." });
+
+  const trimmed = mpLink.trim();
+  if (!trimmed.startsWith("http")) {
+    return JSON.stringify({ error: "El link de MP debe ser una URL válida (ej: https://mpago.la/xxx)." });
+  }
+
+  const ws = await prisma.workspace.update({
+    where: { id: wId },
+    data: { mpEnabled: true, mpPaymentLink: trimmed },
+    select: { name: true, mpPaymentLink: true },
+  });
+
+  return JSON.stringify({
+    ok: true,
+    message: `✅ Link de Mercado Pago guardado para *${ws.name}*. Ahora los recordatorios al inquilino incluirán este link automáticamente.`,
+    mp_link: ws.mpPaymentLink,
+  });
 }
 
 // ─── Email Connection ────────────────────────────────────────────

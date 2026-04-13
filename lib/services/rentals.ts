@@ -54,7 +54,16 @@ export async function createWorkspace(
   }
 
   const result = await prisma.$transaction(async (tx) => {
-    const ws = await tx.workspace.create({ data: { ownerId: input.ownerId, name: input.name } });
+    const ws = await tx.workspace.create({
+      data: {
+        ownerId: input.ownerId,
+        name: input.name,
+        ...(input.payment?.method === "mp_link" && input.payment.mpLink ? {
+          mpEnabled: true,
+          mpPaymentLink: input.payment.mpLink,
+        } : {}),
+      },
+    });
     const prop = await tx.property.create({ data: { workspaceId: ws.id, name: input.name } });
     const unit = await tx.unit.create({
       data: { propertyId: prop.id, identifier: "principal", tenantToken: randomUUID() },

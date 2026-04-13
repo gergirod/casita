@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyPaymentByExternalRef } from "@/lib/services/obligations";
+import { prisma } from "@/lib/prisma";
+import { sendWhatsApp } from "@/lib/whatsapp";
 
 type MpWebhook = {
   action?: string;
@@ -45,6 +47,11 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    // Notify owner via WhatsApp on first verification (non-blocking)
+    if (!result.data.wasAlreadyVerified) {
+      void notifyOwnerPaymentReceived(result.data.obligationId);
+    }
+
     return NextResponse.json({
       ok: true,
       via: "payload",
@@ -52,6 +59,49 @@ export async function POST(req: NextRequest) {
       wasAlreadyVerified: result.data.wasAlreadyVerified,
     });
   }
+
+// ─── Owner notification ──────────────────────────────────────────
+
+async function notifyOwnerPaymentReceived(obligationId: string): Promise<void> {
+  try {
+    const ob = await prisma.obligation.findUnique({
+      where: { id: obligationId },
+      select: {
+        title: true,
+        amount: true,
+        currency: true,
+        unit: {
+          select: {
+            property: {
+              select: {
+                workspace: { select: { ownerId: true, name: true } },
+              },
+            },
+          },
+        },
+      },
+    });
+    if (!ob) return;
+
+    const ownerId = ob.unit.property.workspace.ownerId;
+    const ownerProfile = await prisma.ownerProfile.findUnique({
+      where: { ownerId },
+      select: { phone: true },
+    });
+    if (!ownerProfile?.phone) return;
+
+    const amt = ob.currency === "USD"
+      ? `U$D ${Number(ob.amount).toLocaleString("es-AR")}`
+      : `$ ${Number(ob.amount).toLocaleString("es-AR")}`;
+
+    await sendWhatsApp({
+      to: ownerProfile.phone,
+      body: `✅ *Pago recibido por Mercado Pago*\n\n*${ob.title}* — ${amt}\nCasita: *${ob.unit.property.workspace.name}*\n\nYa está verificado automáticamente.`,
+    });
+  } catch (err) {
+    console.error("[mercadopago-webhook] owner notification failed:", err);
+  }
+}
 
   // Common payload from MP: only type/action/data.id — no external_reference.
   // Acknowledge and wait for retry or manual reconciliation.

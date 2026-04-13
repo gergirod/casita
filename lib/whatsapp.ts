@@ -93,15 +93,16 @@ export function buildWelcomeMessage(input: {
 /* ── Reminder message builder ────────────────────────────────── */
 
 export function buildReminderMessage(input: {
-  tenantName:     string | null;
-  title:          string;
-  amount:         string;
-  currency:       string;
-  dueDate:        string;        /* ISO */
-  daysUntilDue:   number;
-  propertyName?:  string;
+  tenantName:      string | null;
+  title:           string;
+  amount:          string;
+  currency:        string;
+  dueDate:         string;        /* ISO */
+  daysUntilDue:    number;
+  propertyName?:   string;
   unitIdentifier?: string;
-  portalUrl?:     string;
+  portalUrl?:      string;
+  paymentUrl?:     string;        /* MP checkout link — si está, reemplaza el texto de acción */
 }) {
   const name     = input.tenantName ?? "Inquilino";
   const date     = new Date(input.dueDate).toLocaleDateString("es-AR", { day: "numeric", month: "long" });
@@ -111,15 +112,22 @@ export function buildReminderMessage(input: {
   const location = input.propertyName
     ? ` de *${input.propertyName}${input.unitIdentifier ? ` · ${input.unitIdentifier}` : ""}*`
     : "";
-  const link     = input.portalUrl
-    ? `\n\nPodés ver la factura y subir tu comprobante acá:\n${input.portalUrl}`
-    : "";
+
+  // Payment action block — MP link takes priority over portal-only message
+  let actionBlock = "";
+  if (input.paymentUrl && input.portalUrl) {
+    actionBlock = `\n\n💳 Pagá por Mercado Pago:\n${input.paymentUrl}\n\nO subí tu comprobante acá:\n${input.portalUrl}`;
+  } else if (input.paymentUrl) {
+    actionBlock = `\n\n💳 Pagá por Mercado Pago:\n${input.paymentUrl}`;
+  } else if (input.portalUrl) {
+    actionBlock = `\n\nPodés ver la factura y subir tu comprobante acá:\n${input.portalUrl}`;
+  }
 
   if (input.daysUntilDue <= 0) {
-    return `Hola ${name}! 🏠 Te avisamos desde *Casita* que el pago${location} — *${input.title}* (${amt}) — ya está *vencido*.\n\nPor favor regularizá tu situación a la brevedad.${link}`;
+    return `Hola ${name}! 🏠 Te avisamos desde *Casita* que el pago${location} — *${input.title}* (${amt}) — ya está *vencido*.\n\nPor favor regularizá tu situación a la brevedad.${actionBlock}`;
   }
   if (input.daysUntilDue === 1) {
-    return `Hola ${name}! 🏠 Recordatorio de *Casita*: el *${input.title}*${location} (${amt}) vence *mañana*, ${date}. ¡No te olvides!${link}`;
+    return `Hola ${name}! 🏠 Recordatorio de *Casita*: el *${input.title}*${location} (${amt}) vence *mañana*, ${date}. ¡No te olvides!${actionBlock}`;
   }
-  return `Hola ${name}! 🏠 Recordatorio de *Casita*: el *${input.title}*${location} (${amt}) vence el *${date}* — en ${input.daysUntilDue} días.${link}`;
+  return `Hola ${name}! 🏠 Recordatorio de *Casita*: el *${input.title}*${location} (${amt}) vence el *${date}* — en ${input.daysUntilDue} días.${actionBlock}`;
 }

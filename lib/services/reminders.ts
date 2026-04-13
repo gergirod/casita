@@ -52,7 +52,14 @@ export async function sendReminderToTenant(
           property: {
             select: {
               name: true,
-              workspace: { select: { id: true, ownerId: true } },
+              workspace: {
+                select: {
+                  id: true,
+                  ownerId: true,
+                  mpEnabled: true,
+                  mpPaymentLink: true,
+                },
+              },
             },
           },
         },
@@ -97,6 +104,8 @@ export async function sendReminderToTenant(
 
   if (contact.whatsapp && whatsappEnabled) {
     try {
+      const ws = ob.unit.property.workspace;
+      const paymentUrl = ws.mpEnabled && ws.mpPaymentLink ? ws.mpPaymentLink : undefined;
       const body = buildReminderMessage({
         tenantName: contact.fullName,
         title: ob.title,
@@ -107,6 +116,7 @@ export async function sendReminderToTenant(
         propertyName: ob.unit.property.name,
         unitIdentifier: ob.unit.identifier,
         portalUrl: `${APP_URL}/t/${ob.unit.tenantToken}`,
+        paymentUrl,
       });
       await sendWhatsApp({ to: contact.whatsapp, body });
       channels.push("whatsapp");

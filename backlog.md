@@ -23,10 +23,11 @@ _Última actualización: 6 de abril 2026_
 
 ---
 
-## 🔥 Próximo sprint
+## 🔥 Próximo sprint (ordenado por impacto)
 
 - **Obligaciones de alquiler automáticas**: generar obligación de alquiler el 1ro de cada mes para todas las casitas activas. Hoy solo se crea si el owner lo pide manualmente.
-- **Notificación al owner cuando el inquilino sube comprobante**: hoy no hay alerta proactiva al owner bot.
+- **Notificación al owner cuando el inquilino sube comprobante**: hoy no hay alerta proactiva al owner bot. (gap crítico del flujo de pago)
+- **Notificación al owner cuando MP confirma pago**: webhook `/api/webhooks/mercadopago` ya verifica la obligación pero no avisa por WhatsApp al dueño.
 - **Verificación de comprobante desde el dashboard**: botón para marcar como verificado sin pasar por WhatsApp.
 - **Pasar a producción Twilio**: eliminar el límite de 50 msgs/día del sandbox. Requiere número real + Meta Business verification.
 
@@ -57,6 +58,11 @@ _Última actualización: 6 de abril 2026_
 ---
 
 ## 🔭 Largo plazo
+
+- **Google Calendar integration**: crear eventos automáticos de vencimiento de alquiler para owner e inquilino. Requiere OAuth de Google Calendar por separado del OAuth de Gmail. Útil pero no crítico para MVP.
+- **Mercado Pago checkout dinámico por obligación**: generar un link de MP con `external_reference=obligation:xxx` por cada cobro, en lugar del link fijo del owner. Permite auto-verificación sin que el inquilino suba comprobante.
+
+
 
 - Dashboard multi-casita con filtros y analytics
 - CSV export de obligaciones y pagos
