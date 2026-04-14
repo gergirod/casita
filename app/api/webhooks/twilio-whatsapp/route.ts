@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
+import { waitUntil } from "@vercel/functions";
 import { handleWhatsAppMessage } from "@/lib/whatsapp-agent";
 import { handleOwnerMessage } from "@/lib/owner-agent";
 import { routeByPhone } from "@/lib/phone-router";
@@ -51,9 +52,12 @@ export async function POST(req: NextRequest) {
 
   const phone = waId || from.replace(/^whatsapp:/i, "");
 
-  // Process async — respond to Twilio immediately, send reply via REST API
-  processMessageAsync(phone, from, body, mediaUrl, mediaType).catch((err) =>
-    console.error("[webhook] Async processing error:", err)
+  // waitUntil keeps the Vercel function alive until processing finishes,
+  // while still returning the TwiML response to Twilio immediately.
+  waitUntil(
+    processMessageAsync(phone, from, body, mediaUrl, mediaType).catch((err) =>
+      console.error("[webhook] Async processing error:", err)
+    )
   );
 
   return new NextResponse(EMPTY_TWIML, {
