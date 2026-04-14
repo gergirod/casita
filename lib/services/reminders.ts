@@ -99,7 +99,11 @@ export async function sendReminderToTenant(
       else if (emailType === "today") await sendDueTodayEmail(emailArgs);
       else await sendDueSoonEmail(emailArgs);
       channels.push("email");
-    } catch { /* non-blocking — channel failure never aborts the send */ }
+    } catch (err) {
+      console.error("[reminder] Email send failed for obligation", input.obligationId, "to", contact.email, err);
+    }
+  } else {
+    console.warn("[reminder] No email for tenant", contact.id, "— skipping email channel");
   }
 
   if (contact.whatsapp && whatsappEnabled) {
@@ -120,7 +124,13 @@ export async function sendReminderToTenant(
       });
       await sendWhatsApp({ to: contact.whatsapp, body });
       channels.push("whatsapp");
-    } catch { /* non-blocking */ }
+    } catch (err) {
+      console.error("[reminder] WhatsApp send failed for obligation", input.obligationId, "to", contact.whatsapp, err);
+    }
+  } else if (!contact.whatsapp) {
+    console.warn("[reminder] No WhatsApp for tenant", contact.id, "— skipping whatsapp channel");
+  } else if (!whatsappEnabled) {
+    console.warn("[reminder] WhatsApp not enabled for owner", input.ownerId, "— skipping whatsapp channel");
   }
 
   if (channels.length === 0) {
